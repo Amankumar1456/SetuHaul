@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SetuHaul — Driver Chat</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background: #0f1117;
+      color: #e2e8f0;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .header {
+      background: #141720;
+      border-bottom: 1px solid #1e2330;
+      padding: 12px 16px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-shrink: 0;
+    }
+
+    .header-logo {
+      background: linear-gradient(135deg, #f97316, #ef4444);
+      color: white;
+      font-weight: 800;
+      font-size: 13px;
+      padding: 6px 10px;
+      border-radius: 6px;
+    }
+
+    .header-info { flex: 1; }
+
+    .header-name {
+      font-size: 14px;
+      font-weight: 700;
+      color: #f1f5f9;
+    }
+
+    .header-sub {
+      font-size: 11px;
+      color: #64748b;
+      margin-top: 1px;
+    }
+
+    .header-status {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 11px;
+      color: #4ade80;
+    }
+
+    .status-dot {
+      width: 7px;
+      height: 7px;
+      background: #4ade80;
+      border-radius: 50%;
+    }
+
+    .logout-btn {
+      background: none;
+      border: 1px solid #2a2d3e;
+      color: #64748b;
+      border-radius: 6px;
+      padding: 5px 10px;
+      font-size: 11px;
+      cursor: pointer;
+    }
+
+    .logout-btn:hover {
+      border-color: #ef4444;
+      color: #ef4444;
+    }
+
+    .shipment-banner {
+      background: #141720;
+      border-bottom: 1px solid #1e2330;
+      padding: 10px 16px;
+      display: flex;
+      gap: 16px;
+      flex-shrink: 0;
+      overflow-x: auto;
+    }
+
+    .banner-item { flex-shrink: 0; }
+
+    .banner-label {
+      font-size: 9px;
+      color: #475569;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 2px;
+    }
+
+    .banner-value {
+      font-size: 12px;
+      font-weight: 600;
+      color: #e2e8f0;
+    }
+
+    .priority-badge {
+      display: inline-block;
+      padding: 1px 6px;
+      border-radius: 3px;
+      font-size: 10px;
+      font-weight: 700;
+    }
+
+    .chat-area {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .welcome {
+      text-align: center;
+      padding: 24px 16px;
+      color: #475569;
+    }
+
+    .welcome-icon { font-size: 36px; margin-bottom: 10px; }
+
+    .welcome h3 {
+      font-size: 14px;
+      color: #64748b;
+      margin-bottom: 8px;
+    }
+
+    .welcome p {
+      font-size: 12px;
+      color: #475569;
+      line-height: 1.6;
+    }
+
+    .quick-btns {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      justify-content: center;
+      margin-top: 14px;
+    }
+
+    .quick-btn {
+      background: #141720;
+      border: 1px solid #2a2d3e;
+      color: #94a3b8;
+      border-radius: 16px;
+      padding: 6px 12px;
+      font-size: 11px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .quick-btn:hover {
+      border-color: #f97316;
+      color: #f97316;
+    }
+
+    .msg-row {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .msg-row.user { align-items: flex-end; }
+    .msg-row.agent { align-items: flex-start; }
+
+    .msg-name {
+      font-size: 10px;
+      color: #475569;
+      margin-bottom: 3px;
+      padding: 0 4px;
+    }
+
+    .msg-bubble {
+      max-width: 80%;
+      padding: 10px 13px;
+      border-radius: 12px;
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .msg-row.user .msg-bubble {
+      background: #1a2030;
+      border: 1px solid #2a3040;
+      border-radius: 12px 12px 2px 12px;
+      color: #e2e8f0;
+    }
+
+    .msg-row.agent .msg-bubble {
+      background: #141720;
+      border: 1px solid #1e2330;
+      border-radius: 12px 12px 12px 2px;
+      color: #e2e8f0;
+    }
+
+    .msg-time {
+      font-size: 9px;
+      color: #334155;
+      margin-top: 3px;
+      padding: 0 4px;
+    }
+
+    .typing .msg-bubble { padding: 12px 16px; }
+
+    .typing-dots {
+      display: flex;
+      gap: 4px;
+      align-items: center;
+    }
+
+    .typing-dots span {
+      width: 6px;
+      height: 6px;
+      background: #475569;
+      border-radius: 50%;
+      animation: bounce 1.2s infinite;
+    }
+
+    .typing-dots span:nth-child(2) { animation-delay: 0.2s; }
+    .typing-dots span:nth-child(3) { animation-delay: 0.4s; }
+
+    @keyframes bounce {
+      0%, 60%, 100% { transform: translateY(0); }
+      30% { transform: translateY(-4px); }
+    }
+
+    .thread-bar {
+      padding: 5px 16px;
+      background: #0f1117;
+      border-top: 1px solid #1e2330;
+      font-size: 10px;
+      color: #334155;
+      flex-shrink: 0;
+    }
+
+    .input-area {
+      padding: 12px 14px;
+      border-top: 1px solid #1e2330;
+      background: #0f1117;
+      display: flex;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    .input-area textarea {
+      flex: 1;
+      background: #141720;
+      border: 1px solid #2a2d3e;
+      border-radius: 10px;
+      padding: 10px 13px;
+      font-size: 13px;
+      color: #e2e8f0;
+      outline: none;
+      resize: none;
+      font-family: inherit;
+      line-height: 1.4;
+      max-height: 100px;
+      min-height: 42px;
+    }
+
+    .input-area textarea:focus { border-color: #f97316; }
+    .input-area textarea::placeholder { color: #475569; }
+
+    .send-btn {
+      background: #f97316;
+      border: none;
+      border-radius: 10px;
+      width: 42px;
+      height: 42px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      flex-shrink: 0;
+      align-self: flex-end;
+      transition: background 0.2s;
+    }
+
+    .send-btn:hover { background: #ea6c0a; }
+    .send-btn:disabled { background: #334155; cursor: not-allowed; }
+
+    .send-btn svg {
+      width: 18px;
+      height: 18px;
+      fill: white;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="header">
+    <div class="header-logo">SH</div>
+    <div class="header-info">
+      <div class="header-name" id="headerName">Loading...</div>
+      <div class="header-sub">SetuHaul Driver Portal</div>
+    </div>
+    <div class="header-status">
+      <div class="status-dot"></div>
+      Connected
+    </div>
+    <button class="logout-btn" onclick="logout()">Logout</button>
+  </div>
+
+  <div class="shipment-banner" id="shipmentBanner" style="display:none">
+    <div class="banner-item">
+      <div class="banner-label">Shipment</div>
+      <div class="banner-value" id="bannerShipment">—</div>
+    </div>
+    <div class="banner-item">
+      <div class="banner-label">Cargo</div>
+      <div class="banner-value" id="bannerCargo">—</div>
+    </div>
+    <div class="banner-item">
+      <div class="banner-label">Destination</div>
+      <div class="banner-value" id="bannerDest">—</div>
+    </div>
+    <div class="banner-item">
+      <div class="banner-label">Priority</div>
+      <div class="banner-value" id="bannerPriority">—</div>
+    </div>
+    <div class="banner-item">
+      <div class="banner-label">Status</div>
+      <div class="banner-value" id="bannerStatus">—</div>
+    </div>
+  </div>
+
+  <div class="chat-area" id="chatArea">
+    <div class="welcome" id="welcomeMsg">
+      <div class="welcome-icon">🚛</div>
+      <h3 id="welcomeText">Namaste, Driver!</h3>
+      <p>Report a delay, ask about your appointment,<br>or check available slots.</p>
+      <div class="quick-btns">
+        <button class="quick-btn" onclick="quickSend('Main traffic mein hoon, late hounga')">🚦 Traffic delay</button>
+        <button class="quick-btn" onclick="quickSend('Meri gaadi kharab ho gayi')">🔧 Breakdown</button>
+        <button class="quick-btn" onclick="quickSend('Mera appointment kab hai?')">📅 Check appointment</button>
+        <button class="quick-btn" onclick="quickSend('Koi slot available hai kya?')">🔍 Check slots</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="thread-bar" id="threadBar"></div>
+
+  <div class="input-area">
+    <textarea
+      id="msgInput"
+      placeholder="Type your message..."
+      rows="1"
+      onkeydown="handleKey(event)"
+      oninput="autoResize(this)"
+    ></textarea>
+    <button class="send-btn" id="sendBtn" onclick="sendMessage()">
+      <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <path d="M2 21l21-9L2 3v7l15 2-15 2v7z"/>
+      </svg>
+    </button>
+  </div>
+
+  <script>
+    const API = 'http://127.0.0.1:8000';
+
+    // ── Session check ──────────────────────────────────────────────────────
+    const driverId = sessionStorage.getItem('driver_id');
+    const driverName = sessionStorage.getItem('driver_name');
+
+    // Fixed redirect — uses /portal not index.html
+    if (!driverId) {
+      setTimeout(() => {
+        window.location.href = '/portal';
+      }, 100);
+    }
+
+    // ── Setup header ───────────────────────────────────────────────────────
+    document.getElementById('headerName').textContent = driverName || 'Driver';
+    document.getElementById('welcomeText').textContent =
+      `Namaste, ${driverName ? driverName.split(' ')[0] : 'Driver'}!`;
+
+    // ── Load shipment info ─────────────────────────────────────────────────
+    async function loadShipmentInfo() {
+      try {
+        const res = await fetch(`${API}/driver/shipments/${driverId}`);
+        const data = await res.json();
+        if (data.shipments && data.shipments.length > 0) {
+          const shp = data.shipments[0];
+          document.getElementById('bannerShipment').textContent = shp.shipment_id;
+          document.getElementById('bannerCargo').textContent = shp.cargo_desc;
+          document.getElementById('bannerDest').textContent = shp.destination_facility_id;
+          document.getElementById('bannerStatus').textContent = shp.current_status;
+
+          const priorityColors = {
+            CRITICAL: '#ef4444', HIGH: '#f97316',
+            NORMAL: '#64748b', LOW: '#94a3b8'
+          };
+          const color = priorityColors[shp.priority_code] || '#64748b';
+          document.getElementById('bannerPriority').innerHTML =
+            `<span class="priority-badge" style="background:${color}22;color:${color}">
+              ${shp.priority_code}
+            </span>`;
+
+          document.getElementById('shipmentBanner').style.display = 'flex';
+        }
+      } catch (e) {
+        // Silently fail — banner just won't show
+      }
+    }
+
+    if (driverId) loadShipmentInfo();
+
+    // ── Messaging ──────────────────────────────────────────────────────────
+    let threadId = null;
+    let isLoading = false;
+
+    function handleKey(e) {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+      }
+    }
+
+    function autoResize(el) {
+      el.style.height = 'auto';
+      el.style.height = Math.min(el.scrollHeight, 100) + 'px';
+    }
+
+    function quickSend(text) {
+      document.getElementById('msgInput').value = text;
+      sendMessage();
+    }
+
+    function formatTime(date) {
+      return date.toLocaleTimeString('en-IN', {
+        hour: '2-digit', minute: '2-digit', hour12: true
+      });
+    }
+
+    function appendMessage(role, text, time) {
+      const welcome = document.getElementById('welcomeMsg');
+      if (welcome) welcome.remove();
+
+      const chatArea = document.getElementById('chatArea');
+      const row = document.createElement('div');
+      row.className = `msg-row ${role}`;
+
+      const name = role === 'user' ? driverName : 'SetuHaul Ops Agent';
+      const timeStr = formatTime(time || new Date());
+      const formatted = text.replace(/\n/g, '<br>');
+
+      row.innerHTML = `
+        <div class="msg-name">${name}</div>
+        <div class="msg-bubble">${formatted}</div>
+        <div class="msg-time">${timeStr}</div>
+      `;
+
+      chatArea.appendChild(row);
+      chatArea.scrollTop = chatArea.scrollHeight;
+      return row;
+    }
+
+    function showTyping() {
+      const chatArea = document.getElementById('chatArea');
+      const row = document.createElement('div');
+      row.className = 'msg-row agent typing';
+      row.id = 'typingIndicator';
+      row.innerHTML = `
+        <div class="msg-name">SetuHaul Ops Agent</div>
+        <div class="msg-bubble">
+          <div class="typing-dots">
+            <span></span><span></span><span></span>
+          </div>
+        </div>
+      `;
+      chatArea.appendChild(row);
+      chatArea.scrollTop = chatArea.scrollHeight;
+    }
+
+    function removeTyping() {
+      const t = document.getElementById('typingIndicator');
+      if (t) t.remove();
+    }
+
+    async function sendMessage() {
+      if (isLoading) return;
+
+      const input = document.getElementById('msgInput');
+      const text = input.value.trim();
+      if (!text) return;
+
+      isLoading = true;
+      input.value = '';
+      input.style.height = 'auto';
+      document.getElementById('sendBtn').disabled = true;
+
+      appendMessage('user', text, new Date());
+      showTyping();
+
+      try {
+        const res = await fetch(`${API}/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            driver_id: driverId,
+            message: text
+          })
+        });
+
+        const data = await res.json();
+        removeTyping();
+
+        if (data.thread_id) {
+          threadId = data.thread_id;
+          document.getElementById('threadBar').textContent =
+            `Thread: ${threadId} · Messages are saved securely`;
+        }
+
+        appendMessage('agent', data.response, new Date());
+
+      } catch (err) {
+        removeTyping();
+        appendMessage('agent',
+          '⚠️ Connection error. Please check your network and try again.',
+          new Date()
+        );
+      } finally {
+        isLoading = false;
+        document.getElementById('sendBtn').disabled = false;
+        input.focus();
+      }
+    }
+
+    // Fixed logout — uses /portal not index.html
+    function logout() {
+      sessionStorage.clear();
+      window.location.href = '/portal';
+    }
+  </script>
+</body>
+</html>
