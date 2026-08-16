@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse
 
 # ─────────────────────────────────────────────────────────────────────────────
 # FastAPI app
-# This is the web server — it receives messages and returns responses
+# This is the web server — it receives messages and returns responses .
 # Google App Studio will call these endpoints
 # ─────────────────────────────────────────────────────────────────────────────
 
