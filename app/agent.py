@@ -7,12 +7,12 @@ from langgraph.prebuilt import create_react_agent
 from app.tools import ALL_TOOLS
 from app.redis_client import get_conversation, save_conversation
 from app.database import get_or_create_thread, save_chat_message
-from anthropic import Anthropic
+# from anthropic import Anthropic
 from langsmith import traceable
 from langsmith.run_helpers import get_current_run_tree
-from langsmith.wrappers import wrap_anthropic
+# from langsmith.wrappers import wrap_anthropic
 
-client = wrap_anthropic(Anthropic())
+# client = wrap_anthropic(Anthropic())
 
 load_dotenv()
 
