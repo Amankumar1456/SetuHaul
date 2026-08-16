@@ -17,8 +17,8 @@ langsmith==0.1.147
 MarkupSafe==2.1.1
 orjson==3.10.15
 packaging==24.2
-pydantic==2.10.6
-pydantic-core==2.27.2
+pydantic>=2.11.7,<3.0.0
+pydantic-core>=2.27.2
 python-dateutil==2.8.2
 python-dotenv==1.0.1
 pytz==2022.1
