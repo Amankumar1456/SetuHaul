@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 
 load_dotenv()
 
+print("SUPABASE_URL (repr):", repr(os.getenv("SUPABASE_URL")))
+print("SUPABASE_KEY (repr):", repr(os.getenv("SUPABASE_KEY")))
 # Connect to Supabase
 supabase: Client = create_client(
     os.getenv("SUPABASE_URL"),
