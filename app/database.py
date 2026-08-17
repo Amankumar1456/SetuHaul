@@ -6,13 +6,23 @@ from datetime import datetime, timezone
 
 load_dotenv()
 
-print("SUPABASE_URL (repr):", repr(os.getenv("SUPABASE_URL")))
-print("SUPABASE_KEY (repr):", repr(os.getenv("SUPABASE_KEY")))
+supabase_url = os.getenv("SUPABASE_URL")
+supabase_key = os.getenv("SUPABASE_KEY")
+
+print("SUPABASE_URL (repr):", repr(supabase_url))
+print("SUPABASE_KEY (repr):", repr(supabase_key))
+
+if not supabase_url or not supabase_key:
+    raise RuntimeError("Missing SUPABASE_URL or SUPABASE_KEY in environment (.env).")
+
+if supabase_key.startswith("sb_publishable_"):
+    raise RuntimeError(
+        "Invalid SUPABASE_KEY: the value in .env is a publishable key. "
+        "Use the Supabase project service_role secret key for server-side access."
+    )
+
 # Connect to Supabase
-supabase: Client = create_client(
-    os.getenv("SUPABASE_URL"),
-    os.getenv("SUPABASE_KEY")
-)
+supabase: Client = create_client(supabase_url, supabase_key)
 
 # ── Drivers ───────────────────────────────────────────────────────────────────
 

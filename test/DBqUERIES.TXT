@@ -1,0 +1,96 @@
+Here's a set of queries to run in Supabase's SQL Editor to gather everything you'll need for the stress test and general debugging going forward.
+
+## 1. Get real driver IDs
+
+```sql
+SELECT driver_id, driver_name, carrier_id
+FROM drivers
+LIMIT 10;
+```
+
+## 2. Get real facility IDs
+
+```sql
+SELECT facility_id, facility_name
+FROM facilities
+LIMIT 10;
+```
+
+## 3. Get an OPEN slot (not currently booked) — this is your key stress-test target
+
+```sql
+SELECT s.slot_id, s.dock_id, s.dock_type, s.slot_start_ts, s.slot_end_ts, s.facility_id
+FROM appointment_slots s
+WHERE s.slot_id NOT IN (
+    SELECT slot_id FROM appointments WHERE is_current = 1
+)
+AND s.slot_start_ts > now()
+ORDER BY s.slot_start_ts
+LIMIT 10;
+```
+
+## 4. Get shipments that could plausibly compete for the same slot (same facility + dock type)
+
+Once you have a candidate `slot_id` from query 3, find shipments needing that same facility/dock type — these are your "three drivers racing for one slot" candidates:
+
+```sql
+SELECT shipment_id, driver_id, destination_facility_id, required_dock_type, current_status, priority_code
+FROM shipments
+WHERE destination_facility_id = 'PASTE_FACILITY_ID'
+AND required_dock_type = 'PASTE_DOCK_TYPE'
+AND current_status NOT IN ('DELIVERED', 'CANCELLED')
+LIMIT 10;
+```
+
+## 5. Check a shipment's current appointment status (to confirm it's not already booked elsewhere)
+
+```sql
+SELECT a.appointment_id, a.shipment_id, a.slot_id, a.appointment_status, a.is_current
+FROM appointments a
+WHERE a.shipment_id = 'PASTE_SHIPMENT_ID'
+ORDER BY a.booked_at DESC;
+```
+
+## 6. Verify a booking after running the stress test (your ground-truth check)
+
+```sql
+SELECT a.appointment_id, a.shipment_id, a.slot_id, a.appointment_status, a.booked_at,
+       s.slot_start_ts, s.slot_end_ts
+FROM appointments a
+JOIN appointment_slots s ON a.slot_id = s.slot_id
+WHERE a.slot_id = 'PASTE_SLOT_ID'
+ORDER BY a.booked_at DESC;
+```
+
+## 7. Reset a slot back to OPEN between test runs (so you can re-run the stress test repeatedly)
+
+```sql
+DELETE FROM appointments
+WHERE slot_id = 'PASTE_SLOT_ID';
+```
+
+*(Careful — this is destructive. Only run against test/seed data, and confirm the row first with query 6 before deleting.)*
+
+## 8. Check escalations, in case a stress test accidentally triggers one
+
+```sql
+SELECT * FROM escalations
+ORDER BY created_at DESC
+LIMIT 5;
+```
+
+---
+
+## Things worth keeping handy in a scratch file
+
+Once you run queries 1–3, jot these down somewhere (a `test_data.txt` or similar, **not committed to git**):
+
+```
+SLOT_ID = 
+FACILITY_ID = 
+DOCK_TYPE = 
+DRIVER_IDS = [DRV___, DRV___, DRV___]
+SHIPMENT_IDS = [SHP___, SHP___, SHP___]
+```
+
+These plug directly into the `stress_test_hold.py` script from earlier. Run queries 1–3 first and paste back what you get — I'll help you pick three that will actually collide correctly before we run the live stress test.
