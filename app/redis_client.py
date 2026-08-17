@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Connect to Redis
-r = redis.from_url(os.getenv("REDIS_URL", "redis://lo
+r = redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379"))
 # ── Slot Holds ────────────────────────────────────────────────────────────────
 # A hold means: this slot is being considered by a driver
 # It blocks other drivers from claiming the same slot
