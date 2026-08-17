@@ -92,7 +92,7 @@ def chat(request: ChatRequest):
     """
     Main endpoint — receives a driver message and returns agent response.
 
-    Google App Studio will POST to this endpoint with:
+    UI will POST to this endpoint with:
     {
         "driver_id": "DRV006",
         "message": "I am stuck in traffic, will be 90 minutes late"
