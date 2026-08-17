@@ -45,7 +45,7 @@
 
     .header-meta {
       font-size: 11px;
-      color: #475569;
+      color: #94a3b8;
     }
 
     .live-badge {
@@ -110,7 +110,7 @@
 
     .stat-label {
       font-size: 10px;
-      color: #475569;
+      color: #94a3b8;
       text-transform: uppercase;
       letter-spacing: 0.06em;
       margin-bottom: 6px;
@@ -174,7 +174,7 @@
 
     .panel-count {
       font-size: 11px;
-      color: #475569;
+      color: #94a3b8;
     }
 
     .panel-body {
@@ -219,7 +219,7 @@
 
     .shp-cargo {
       font-size: 10px;
-      color: #475569;
+      color: #94a3b8;
       margin-top: 1px;
     }
 
@@ -293,7 +293,7 @@
 
     .slot-box:hover { transform: scale(1.1); }
 
-    .slot-open     { background: #1e2030; border-color: #2a2d3e; color: #475569; }
+    .slot-open     { background: #1e2030; border-color: #2a2d3e; color: #94a3b8; }
     .slot-booked   { background: #1a2a3a; border-color: #2d4a6b; color: #7dd3fc; }
     .slot-progress { background: #1a3a1a; border-color: #2d6b2d; color: #86efac; }
     .slot-blocked  { background: #3a2a2a; border-color: #6b3333; color: #f87171; }
@@ -342,10 +342,16 @@
     }
 
     .esc-id {
-      font-size: 10px;
-      font-weight: 700;
-      color: #ef4444;
-    }
+  font-size: 11px;
+  font-weight: 700;
+  color: #ef4444;
+  font-family: 'Courier New', monospace;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+}
+.esc-id:hover {
+  text-decoration: underline;
+}
 
     .esc-urgency {
       font-size: 9px;
@@ -434,7 +440,7 @@
 
     .thread-meta {
       font-size: 10px;
-      color: #475569;
+      color: #94a3b8;
       margin-top: 2px;
     }
 
@@ -450,9 +456,127 @@
     .loading {
       text-align: center;
       padding: 20px;
-      color: #475569;
+      color: #94a3b8;
       font-size: 12px;
     }
+    /* ── Admin Chat Widget ── */
+.admin-chat-toggle {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #f97316, #ef4444);
+  color: white;
+  border: none;
+  font-size: 24px;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.admin-chat-box {
+  position: fixed;
+  bottom: 88px;
+  right: 20px;
+  width: 340px;
+  max-height: 460px;
+  background: #141720;
+  border: 1px solid #2a2d3e;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+  display: none;
+  flex-direction: column;
+  z-index: 1000;
+}
+
+.admin-chat-box.open { display: flex; }
+
+.admin-chat-header {
+  padding: 12px 14px;
+  border-bottom: 1px solid #1e2330;
+  font-weight: 700;
+  font-size: 13px;
+  color: #f1f5f9;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.admin-chat-close {
+  cursor: pointer;
+  color: #64748b;
+  font-size: 16px;
+}
+
+.admin-chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 320px;
+}
+
+.admin-msg {
+  font-size: 12px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  line-height: 1.4;
+}
+
+.admin-msg.user {
+  background: #1e2330;
+  color: #e2e8f0;
+  align-self: flex-end;
+  max-width: 85%;
+}
+
+.admin-msg.agent {
+  background: #0f1117;
+  border: 1px solid #1e2330;
+  color: #94a3b8;
+  align-self: flex-start;
+  max-width: 85%;
+}
+
+.admin-chat-input-row {
+  display: flex;
+  gap: 6px;
+  padding: 10px 12px;
+  border-top: 1px solid #1e2330;
+}
+
+.admin-chat-input {
+  flex: 1;
+  background: #0f1117;
+  border: 1px solid #2a2d3e;
+  border-radius: 6px;
+  color: #e2e8f0;
+  padding: 8px 10px;
+  font-size: 12px;
+}
+
+.admin-chat-send {
+  background: #f97316;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.admin-chat-send:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
   </style>
 </head>
 <body>
@@ -473,11 +597,11 @@
 
     <!-- Stats Row -->
     <div class="stats-row" id="statsRow">
-      <div class="stat-card">
-        <div class="stat-label">In Transit</div>
-        <div class="stat-value" id="statTransit">—</div>
-        <div class="stat-sub">drivers en route</div>
-      </div>
+      <div class="stat-card" style="cursor:pointer" onclick="focusPanel('panelTransit')">
+  <div class="stat-label">In Transit</div>
+  <div class="stat-value" id="statTransit">—</div>
+  <div class="stat-sub">drivers en route</div>
+</div>
       <div class="stat-card">
         <div class="stat-label">Waiting</div>
         <div class="stat-value" id="statWaiting">—</div>
@@ -488,30 +612,30 @@
         <div class="stat-value" id="statDock">—</div>
         <div class="stat-sub">unloading now</div>
       </div>
-      <div class="stat-card">
-        <div class="stat-label">Active Holds</div>
-        <div class="stat-value" id="statHolds">—</div>
-        <div class="stat-sub">slots being negotiated</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-label">Escalations</div>
-        <div class="stat-value" id="statEsc" style="color:#ef4444">—</div>
-        <div class="stat-sub">need human attention</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-label">Open Threads</div>
-        <div class="stat-value" id="statThreads">—</div>
-        <div class="stat-sub">active conversations</div>
-      </div>
+      <div class="stat-card" style="cursor:pointer" onclick="focusPanel('panelHolds')">
+  <div class="stat-label">Active Holds</div>
+  <div class="stat-value" id="statHolds">—</div>
+  <div class="stat-sub">slots being negotiated</div>
+</div>
+      <div class="stat-card" style="cursor:pointer" onclick="focusPanel('panelEscalations')">
+  <div class="stat-label">Escalations</div>
+  <div class="stat-value" id="statEsc" style="color:#ef4444">—</div>
+  <div class="stat-sub">need human attention</div>
+</div>
+      <div class="stat-card" style="cursor:pointer" onclick="focusPanel('panelThreads')">
+  <div class="stat-label">Open Threads</div>
+  <div class="stat-value" id="statThreads">—</div>
+  <div class="stat-sub">active conversations</div>
+</div>
     </div>
 
     <!-- Row 1: Queue panels -->
     <div class="grid-3">
 
       <!-- In Transit -->
-      <div class="panel">
-        <div class="panel-header">
-          <div class="panel-title">🚛 In Transit</div>
+<div class="panel" id="panelTransit">
+  <div class="panel-header">
+    <div class="panel-title">🚛 In Transit</div>
           <div class="panel-count" id="countTransit">—</div>
         </div>
         <div class="panel-body" id="listTransit">
@@ -569,9 +693,9 @@
       <div style="display:flex;flex-direction:column;gap:14px">
 
         <!-- Escalations -->
-        <div class="panel">
-          <div class="panel-header">
-            <div class="panel-title">🚨 Escalations</div>
+<div class="panel" id="panelEscalations">
+  <div class="panel-header">
+    <div class="panel-title">🚨 Escalations</div>
             <div class="panel-count" id="countEsc">—</div>
           </div>
           <div class="panel-body" id="listEsc">
@@ -579,10 +703,11 @@
           </div>
         </div>
 
+        
         <!-- Active Holds -->
-        <div class="panel">
-          <div class="panel-header">
-            <div class="panel-title">🔒 Active Slot Holds</div>
+<div class="panel" id="panelHolds">
+  <div class="panel-header">
+    <div class="panel-title">🔒 Active Slot Holds</div>
             <div class="panel-count" id="countHolds">—</div>
           </div>
           <div class="panel-body" id="listHolds">
@@ -594,9 +719,9 @@
     </div>
 
     <!-- Row 3: Active Threads -->
-    <div class="panel" style="margin-bottom:20px">
-      <div class="panel-header">
-        <div class="panel-title">💬 Active Chat Threads</div>
+<div class="panel" style="margin-bottom:20px" id="panelThreads">
+  <div class="panel-header">
+    <div class="panel-title">💬 Active Chat Threads</div>
         <div class="panel-count" id="countThreads">—</div>
       </div>
       <div class="panel-body" style="max-height:200px" id="listThreads">
@@ -614,6 +739,14 @@
     function priorityColor(p) {
       return { CRITICAL:'#ef4444', HIGH:'#f97316', NORMAL:'#64748b', LOW:'#94a3b8' }[p] || '#64748b';
     }
+    function focusPanel(panelId) {
+  const el = document.getElementById(panelId);
+  if (!el) return;
+  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  el.style.transition = 'box-shadow 0.3s';
+  el.style.boxShadow = '0 0 0 2px #f97316';
+  setTimeout(() => { el.style.boxShadow = 'none'; }, 1200);
+}
 
     function priorityBg(p) {
       return { CRITICAL:'#ef444422', HIGH:'#f9731622', NORMAL:'#64748b22', LOW:'#94a3b822' }[p] || '#64748b22';
@@ -842,7 +975,7 @@
           return `
             <div class="esc-card">
               <div class="esc-header">
-                <div class="esc-id">${e.exception_id}</div>
+                <div class="esc-id" onclick="navigator.clipboard.writeText('${e.exception_id}')" style="cursor:pointer" title="Click to copy">${e.exception_id}</div>
                 <div class="esc-urgency" style="background:${uc}22;color:${uc}">
                   ${e.urgency || '—'}
                 </div>
@@ -920,6 +1053,54 @@
     // Load on start, then auto-refresh every 30 seconds
     loadAll();
     setInterval(loadAll, 30000);
+    function toggleAdminChat() {
+  document.getElementById('adminChatBox').classList.toggle('open');
+}
+
+async function sendAdminMessage() {
+  const input = document.getElementById('adminChatInput');
+  const message = input.value.trim();
+  if (!message) return;
+
+  const messagesEl = document.getElementById('adminChatMessages');
+  const sendBtn = document.getElementById('adminChatSend');
+
+  messagesEl.innerHTML += `<div class="admin-msg user">${message}</div>`;
+  input.value = '';
+  sendBtn.disabled = true;
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+
+  try {
+    const res = await fetch(`${API}/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ driver_id: 'ADMIN-OPS', message })
+    });
+    const data = await res.json();
+    const reply = data.response || 'No response received.';
+    messagesEl.innerHTML += `<div class="admin-msg agent">${reply}</div>`;
+  } catch (e) {
+    messagesEl.innerHTML += `<div class="admin-msg agent">⚠️ Error reaching assistant.</div>`;
+  }
+
+  sendBtn.disabled = false;
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
   </script>
+  <button class="admin-chat-toggle" onclick="toggleAdminChat()" title="Ask ops assistant">💬</button>
+
+<div class="admin-chat-box" id="adminChatBox">
+  <div class="admin-chat-header">
+    <span>🤖 Ops Assistant</span>
+    <span class="admin-chat-close" onclick="toggleAdminChat()">✕</span>
+  </div>
+  <div class="admin-chat-messages" id="adminChatMessages">
+    <div class="admin-msg agent">Ask me about shipments, slots, holds, or escalations.</div>
+  </div>
+  <div class="admin-chat-input-row">
+    <input type="text" class="admin-chat-input" id="adminChatInput" placeholder="Type a question..." onkeydown="if(event.key==='Enter') sendAdminMessage()">
+    <button class="admin-chat-send" id="adminChatSend" onclick="sendAdminMessage()">Send</button>
+  </div>
+</div>
 </body>
 </html>
