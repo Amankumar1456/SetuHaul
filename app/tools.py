@@ -1,6 +1,8 @@
 from langchain_core.tools import tool
 from langsmith import traceable
 from langsmith.run_helpers import get_current_run_tree
+import requests
+import os
 from app.database import (
     get_driver,
     get_driver_shipments,
@@ -314,6 +316,136 @@ def escalate_to_human(
         "message": f"Escalated to human ops team. Reference: {exc_id}. A coordinator will contact the driver shortly."
     }
 
+@tool
+@traceable(name="get_ops_summary", run_type="tool")
+def get_ops_summary() -> dict:
+    """
+    Get a real-time summary of facility operations for the current day.
+    Returns counts and snapshots of:
+    - Shipments in transit, waiting, and in dock
+    - Active slot holds (being negotiated)
+    - Open escalations (waiting for human attention)
+    - Active chat threads (ongoing driver conversations)
+    
+    Use this to answer questions like "how many escalations are open?" 
+    or "what's the current facility load?"
+    """
+    # Get API base URL from environment, default to localhost for local dev
+    api_base = os.getenv("API_BASE_URL", "http://localhost:8000").rstrip("/")
+    
+    try:
+        # Fetch queue data (shipments by status)
+        queue_res = requests.get(f"{api_base}/ops/queue", timeout=5)
+        queue_data = queue_res.json() if queue_res.status_code == 200 else {"shipments": []}
+        
+        # Fetch holds data
+        holds_res = requests.get(f"{api_base}/ops/holds", timeout=5)
+        holds_data = holds_res.json() if holds_res.status_code == 200 else {"active_holds": []}
+        
+        # Fetch escalations data
+        esc_res = requests.get(f"{api_base}/ops/escalations", timeout=5)
+        esc_data = esc_res.json() if esc_res.status_code == 200 else {"escalations": []}
+        
+        # Fetch threads data
+        threads_res = requests.get(f"{api_base}/ops/threads", timeout=5)
+        threads_data = threads_res.json() if threads_res.status_code == 200 else {"threads": []}
+        
+        shipments = queue_data.get("shipments", [])
+        holds = holds_data.get("active_holds", [])
+        escalations = esc_data.get("escalations", [])
+        threads = threads_data.get("threads", [])
+        
+        # Parse shipments by status
+        in_transit = [s for s in shipments if s.get("current_status") == "IN_TRANSIT"]
+        waiting = [s for s in shipments if s.get("current_status") == "WAITING"]
+        in_dock = [s for s in shipments if s.get("current_status") == "IN_DOCK"]
+        
+        # Count open threads (exclude CLOSED)
+        open_threads = [t for t in threads if t.get("thread_status") != "CLOSED"]
+        
+        # Build summary with both counts and detail lists
+        summary = {
+            "queue": {
+                "in_transit_count": len(in_transit),
+                "in_transit": [
+                    {
+                        "shipment_id": s.get("shipment_id"),
+                        "driver_id": s.get("driver_id"),
+                        "priority": s.get("priority_code"),
+                        "destination": s.get("destination_facility_id"),
+                    }
+                    for s in in_transit[:5]  # Top 5
+                ],
+            },
+            "waiting_count": len(waiting),
+            "in_dock_count": len(in_dock),
+            "total_shipments": len(shipments),
+            
+            "holds": {
+                "active_holds_count": len(holds),
+                "active_holds": [
+                    {
+                        "slot_id": h.get("slot_id"),
+                        "shipment_id": h.get("shipment_id"),
+                        "held_by_driver": h.get("driver_id"),
+                        "held_since": h.get("hold_ts"),
+                        "expires_at": h.get("expires_at"),
+                    }
+                    for h in holds
+                ],
+            },
+            
+            "escalations": {
+                "open_escalations_count": len(escalations),
+                "open_escalations": [
+                    {
+                        "escalation_id": e.get("escalation_id"),
+                        "shipment_id": e.get("shipment_id"),
+                        "driver_id": e.get("driver_id"),
+                        "reason": e.get("reason"),
+                        "urgency": e.get("urgency"),
+                        "reported_at": e.get("reported_at"),
+                    }
+                    for e in escalations
+                ],
+            },
+            
+            "threads": {
+                "open_threads_count": len(open_threads),
+                "total_threads": len(threads),
+                "open_threads": [
+                    {
+                        "thread_id": t.get("thread_id"),
+                        "driver_id": t.get("driver_id"),
+                        "shipment_id": t.get("shipment_id"),
+                        "status": t.get("thread_status"),
+                        "opened_at": t.get("opened_at"),
+                    }
+                    for t in open_threads[:10]  # Top 10
+                ],
+            },
+        }
+        
+        return {
+            "success": True,
+            "timestamp": __import__("datetime").datetime.now().isoformat(),
+            **summary
+        }
+        
+    except requests.RequestException as e:
+        return {
+            "success": False,
+            "error": f"Failed to fetch ops data: {str(e)}",
+            "message": "Please try again or contact operations directly."
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Error processing ops summary: {str(e)}",
+            "message": "Please try again or contact operations directly."
+        }
+
+
 # ── Export all tools as a list for the agent ──────────────────────────────────
 # This is what we pass to LangChain when building the agent
 
@@ -324,4 +456,5 @@ ALL_TOOLS = [
     confirm_booking_tool,
     release_hold_tool,
     escalate_to_human,
+    get_ops_summary,
 ]

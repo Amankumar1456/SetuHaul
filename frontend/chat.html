@@ -113,6 +113,35 @@
       font-weight: 700;
     }
 
+
+    .booking-section {
+      flex: 1; min-height: 0; overflow-y: auto; padding: 22px 16px 92px;
+      display: flex; flex-direction: column; align-items: center;
+    }
+    .booking-section.hidden { display: none; }
+    .booking-header { width: 100%; max-width: 480px; text-align: center; margin-bottom: 14px; }
+    .booking-header h2 { font-size: 15px; color: #f1f5f9; margin-bottom: 4px; }
+    .booking-header p { font-size: 11px; color: #64748b; }
+    .booking-list { width: 100%; max-width: 480px; display: flex; flex-direction: column; gap: 12px; }
+    .booking-tile { width: 100%; background: #141720; border: 1px solid #1e2330; border-radius: 14px; padding: 15px; cursor: pointer; text-align: left; transition: border-color .2s, transform .15s; }
+    .booking-tile:hover { border-color: #334155; transform: translateY(-1px); }
+    .booking-tile:active { transform: scale(.99); }
+    .booking-tile-top { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:11px; }
+    .booking-tag { display:inline-flex; padding:4px 8px; border-radius:999px; font-size:9px; font-weight:800; letter-spacing:.05em; }
+    .booking-tag.ongoing { background:#14532d; color:#86efac; }
+    .booking-tag.upcoming { background:#1e3a5f; color:#93c5fd; }
+    .booking-tag.past { background:#27272a; color:#a1a1aa; }
+    .booking-status { font-size:10px; color:#64748b; text-align:right; }
+    .booking-facility { font-size:14px; font-weight:700; color:#f1f5f9; margin-bottom:5px; }
+    .booking-time { font-size:12px; color:#cbd5e1; margin-bottom:9px; }
+    .booking-meta { display:flex; flex-wrap:wrap; gap:6px 14px; font-size:10px; color:#64748b; }
+    .booking-empty { width:100%; max-width:480px; text-align:center; padding:48px 20px; color:#64748b; font-size:12px; }
+    .agent-help-btn { position:fixed; left:50%; bottom:18px; transform:translateX(-50%); z-index:50; width:56px; height:56px; border:1px solid #fb923c; border-radius:50%; background:#f97316; color:#fff; display:flex; align-items:center; justify-content:center; box-shadow:0 8px 24px rgba(0,0,0,.35); cursor:pointer; font-size:25px; }
+    .agent-help-btn:hover { background:#ea6c0a; }
+    .chat-back-btn { background:none; border:1px solid #2a2d3e; color:#94a3b8; border-radius:7px; padding:5px 9px; font-size:11px; cursor:pointer; margin-right:2px; }
+    .chat-back-btn:hover { border-color:#f97316; color:#f97316; }
+    @media (max-width:600px) { .booking-section { padding:18px 14px 92px; } .booking-tile { padding:14px; } .agent-help-btn { bottom:14px; } }
+
     .chat-area {
       flex: 1;
       overflow-y: auto;
@@ -299,6 +328,7 @@
 <body>
 
   <div class="header">
+    <button class="chat-back-btn" id="chatBackBtn" onclick="showBookings()" style="display:none">← Bookings</button>
     <div class="header-logo">SH</div>
     <div class="header-info">
       <div class="header-name" id="headerName">Loading...</div>
@@ -334,7 +364,15 @@
     </div>
   </div>
 
-  <div class="chat-area" id="chatArea">
+  <section class="booking-section" id="bookingSection">
+    <div class="booking-header">
+      <h2>My Bookings</h2>
+      <p>Your appointments and shipment slots</p>
+    </div>
+    <div class="booking-list" id="bookingList"></div>
+  </section>
+
+  <div class="chat-area" id="chatArea" style="display:none">
     <div class="welcome" id="welcomeMsg">
       <div class="welcome-icon">🚛</div>
       <h3 id="welcomeText">Namaste, Driver!</h3>
@@ -350,7 +388,9 @@
 
   <div class="thread-bar" id="threadBar"></div>
 
-  <div class="input-area">
+  <button class="agent-help-btn" id="agentHelpBtn" onclick="showChat()" aria-label="Open SetuHaul Agent">🤖</button>
+
+  <div class="input-area" id="inputArea" style="display:none">
     <textarea
       id="msgInput"
       placeholder="Type your message..."
@@ -384,36 +424,111 @@
     document.getElementById('welcomeText').textContent =
       `Namaste, ${driverName ? driverName.split(' ')[0] : 'Driver'}!`;
 
-    // ── Load shipment info ─────────────────────────────────────────────────
-    async function loadShipmentInfo() {
+    // ── Load driver's bookings ────────────────────────────────────────────────
+    let driverBookings = [];
+
+    function getBookingTag(booking) {
+      const slotStart = new Date(booking.slot_start_ts).getTime();
+      const now = Date.now();
+      const status = String(booking.appointment_status || booking.status || '').toUpperCase();
+
+      if (status === 'COMPLETED' || status === 'CANCELLED') return 'PAST';
+      if (status === 'CONFIRMED' && slotStart <= now) return 'ONGOING';
+      if (slotStart > now) return 'UPCOMING';
+      return 'PAST';
+    }
+
+    function formatBookingDate(ts) {
+      const date = new Date(ts);
+      const now = new Date();
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const tomorrow = new Date(today); tomorrow.setDate(tomorrow.getDate() + 1);
+      const bookingDay = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+      let dayLabel = bookingDay.getTime() === today.getTime() ? 'Today' :
+        bookingDay.getTime() === tomorrow.getTime() ? 'Tomorrow' :
+        date.toLocaleDateString('en-IN', {day:'2-digit', month:'short', year:'numeric'});
+      const time = date.toLocaleTimeString('en-IN', {hour:'2-digit', minute:'2-digit', hour12:true});
+      return `${dayLabel} · ${time}`;
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;');
+    }
+
+    function sortedBookings() {
+      const priority = { ONGOING:0, UPCOMING:1, PAST:2 };
+      return [...driverBookings].map(b => ({...b, _tag:getBookingTag(b)})).sort((a,b) => {
+        if (priority[a._tag] !== priority[b._tag]) return priority[a._tag] - priority[b._tag];
+        return new Date(a.slot_start_ts) - new Date(b.slot_start_ts);
+      });
+    }
+
+    function renderBookings() {
+      const list = document.getElementById('bookingList');
+      const bookings = sortedBookings();
+      if (!bookings.length) {
+        list.innerHTML = `<div class="booking-empty"><div style="font-size:32px;margin-bottom:10px">📅</div>No bookings found for your account.</div>`;
+        return;
+      }
+      list.innerHTML = bookings.map((booking,index) => {
+        const facility = booking.facility_name || booking.destination_facility_id || booking.facility_id || 'Warehouse';
+        const shipment = booking.shipment_id || booking.shipment || '—';
+        const status = booking.appointment_status || booking.status || '—';
+        const dock = booking.dock_type || booking.dock || '';
+        return `<div class="booking-tile" onclick="selectBooking(${index})">
+          <div class="booking-tile-top"><span class="booking-tag ${booking._tag.toLowerCase()}">${booking._tag}</span><span class="booking-status">${escapeHtml(status)}</span></div>
+          <div class="booking-facility">${escapeHtml(facility)}</div>
+          <div class="booking-time">📅 ${formatBookingDate(booking.slot_start_ts)}</div>
+          <div class="booking-meta"><span>Shipment: ${escapeHtml(shipment)}</span>${dock ? `<span>Dock: ${escapeHtml(dock)}</span>` : ''}</div>
+        </div>`;
+      }).join('');
+    }
+
+    function selectBooking(index) {
+      const booking = sortedBookings()[index];
+      if (!booking) return;
+      sessionStorage.setItem('selected_booking', JSON.stringify(booking));
+      showChat();
+      const shipment = booking.shipment_id || booking.shipment || 'this shipment';
+      const facility = booking.facility_name || booking.destination_facility_id || booking.facility_id || 'your warehouse';
+      const input = document.getElementById('msgInput');
+      input.value = `I need help with my ${shipment} booking at ${facility}.`;
+      autoResize(input);
+      input.focus();
+    }
+
+    async function loadBookings() {
       try {
         const res = await fetch(`${API}/driver/shipments/${driverId}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
-        if (data.shipments && data.shipments.length > 0) {
-          const shp = data.shipments[0];
-          document.getElementById('bannerShipment').textContent = shp.shipment_id;
-          document.getElementById('bannerCargo').textContent = shp.cargo_desc;
-          document.getElementById('bannerDest').textContent = shp.destination_facility_id;
-          document.getElementById('bannerStatus').textContent = shp.current_status;
-
-          const priorityColors = {
-            CRITICAL: '#ef4444', HIGH: '#f97316',
-            NORMAL: '#64748b', LOW: '#94a3b8'
-          };
-          const color = priorityColors[shp.priority_code] || '#64748b';
-          document.getElementById('bannerPriority').innerHTML =
-            `<span class="priority-badge" style="background:${color}22;color:${color}">
-              ${shp.priority_code}
-            </span>`;
-
-          document.getElementById('shipmentBanner').style.display = 'flex';
-        }
+        driverBookings = data.bookings || data.appointments || data.shipments || [];
+        renderBookings();
       } catch (e) {
-        // Silently fail — banner just won't show
+        document.getElementById('bookingList').innerHTML = `<div class="booking-empty">Unable to load your bookings. Please try again.</div>`;
       }
     }
 
-    if (driverId) loadShipmentInfo();
+    function showChat() {
+      document.getElementById('bookingSection').classList.add('hidden');
+      document.getElementById('chatArea').style.display = 'flex';
+      document.getElementById('inputArea').style.display = 'flex';
+      document.getElementById('threadBar').style.display = 'block';
+      document.getElementById('agentHelpBtn').style.display = 'none';
+      document.getElementById('chatBackBtn').style.display = 'block';
+    }
+
+    function showBookings() {
+      document.getElementById('chatArea').style.display = 'none';
+      document.getElementById('inputArea').style.display = 'none';
+      document.getElementById('threadBar').style.display = 'none';
+      document.getElementById('bookingSection').classList.remove('hidden');
+      document.getElementById('agentHelpBtn').style.display = 'flex';
+      document.getElementById('chatBackBtn').style.display = 'none';
+      renderBookings();
+    }
+
+    if (driverId) loadBookings();
 
     // ── Messaging ──────────────────────────────────────────────────────────
     let threadId = null;
