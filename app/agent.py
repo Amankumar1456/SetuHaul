@@ -23,10 +23,10 @@ load_dotenv()
 # ─────────────────────────────────────────────────────────────────────────────
 
 def get_llm():
-    from langchain_groq import ChatGroq
-    return ChatGroq(
-        model="llama-3.3-70b-versatile",
-        groq_api_key=os.getenv("GROQ_API_KEY"),
+    return ChatOpenAI(
+        model=os.getenv("OPENROUTER_MODEL"),
+        api_key=os.getenv("OPENROUTER_API_KEY"),
+        base_url="https://openrouter.ai/api/v1",
         temperature=0,
         max_tokens=1000,
     )
