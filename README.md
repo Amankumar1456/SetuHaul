@@ -1925,7 +1925,80 @@ Required indexes for performance:
 ---
 
 
-
+## Master Flow 
+                         DRIVER
+                           │
+                           ▼
+                    ┌─────────────┐
+                    │     UI      │
+                    └──────┬──────┘
+                           │
+                           ▼
+                    ┌─────────────┐
+                    │ LLM / Agent │
+                    │             │
+                    │ Understand  │
+                    │ Context     │
+                    │ Tool Call   │
+                    └──────┬──────┘
+                           │
+                           ▼
+                ┌──────────────────────┐
+                │      TOOL LAYER      │
+                └──────────┬───────────┘
+                           │
+                           ▼
+                ┌──────────────────────┐
+                │     FEASIBILITY      │
+                │                      │
+                │ Can this driver use  │
+                │ this slot?           │
+                └──────────┬───────────┘
+                           │
+                           ▼
+                ┌──────────────────────┐
+                │      ALLOCATION      │
+                │                      │
+                │ Which feasible slot  │
+                │ should be preferred? │
+                └──────────┬───────────┘
+                           │
+                           ▼
+                    OPTIONS SHOWN
+                           │
+                           ▼
+                    DRIVER SELECTS
+                           │
+                           ▼
+                ┌──────────────────────┐
+                │    REVALIDATION      │
+                │                      │
+                │ Is it STILL valid?  │
+                └──────────┬───────────┘
+                           │
+                           ▼
+                ┌──────────────────────┐
+                │    REDIS HOLD        │
+                │                      │
+                │ Atomic / temporary   │
+                │ capacity protection  │
+                └──────────┬───────────┘
+                           │
+                           ▼
+                ┌──────────────────────┐
+                │    DB BOOKING        │
+                │                      │
+                │ Persistent state     │
+                └──────────┬───────────┘
+                           │
+                           ▼
+                      CONFIRMED
+                           │
+                           ▼
+                    ┌────────────┐
+                    │    OPS     │
+                    │  VERIFY    │
+                    └────────────┘
 
 ## Summary: What This System Does
 
