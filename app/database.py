@@ -140,11 +140,34 @@ def get_feasible_slots(
 # ── Appointments ──────────────────────────────────────────────────────────────
 
 def book_appointment(shipment_id: str, slot_id: str) -> dict:
-    """Create a new PENDING_CONFIRMATION appointment."""
+    """
+    Create a new PENDING_CONFIRMATION appointment.
+    
+    IDEMPOTENCY: If this shipment already has a PENDING_CONFIRMATION or CONFIRMED
+    appointment on this exact slot, return the existing appointment instead of
+    creating a duplicate. This prevents retries from creating multiple bookings.
+    
+    ATOMICITY: Uses database logic to prevent two concurrent requests from both
+    succeeding. Only one will obtain is_current=1 for this shipment.
+    """
     apt_id = f"APT-{uuid.uuid4().hex[:8].upper()}"
     now = datetime.now(timezone.utc).isoformat()
 
+    # IDEMPOTENCY CHECK: Look for existing appointment on this slot
+    existing = supabase.table("appointments").select("*").eq(
+        "shipment_id", shipment_id
+    ).eq("slot_id", slot_id).in_(
+        "appointment_status",
+        ["PENDING_CONFIRMATION", "CONFIRMED", "IN_PROGRESS"]
+    ).execute()
+    
+    if existing.data:
+        # This shipment already has an appointment on this slot
+        # Return it instead of creating a duplicate
+        return existing.data[0]
+
     # Mark any previous current appointment as not current
+    # (this handles case where driver is rebooking)
     supabase.table("appointments").update(
         {"is_current": 0}
     ).eq("shipment_id", shipment_id).eq("is_current", 1).execute()

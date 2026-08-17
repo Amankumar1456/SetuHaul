@@ -3,6 +3,7 @@ from langsmith import traceable
 from langsmith.run_helpers import get_current_run_tree
 import requests
 import os
+from datetime import datetime, timezone, timedelta
 from app.database import (
     get_driver,
     get_driver_shipments,
@@ -18,6 +19,8 @@ from app.database import (
     get_or_create_thread,
 )
 from app.redis_client import place_hold, release_hold, is_slot_held_by_other
+from app.allocation import allocate_slot
+from app.feasibility import validate_slot_against_current_state
 
 # ─────────────────────────────────────────────────────────────────────────────
 # TOOLS — these are the functions the AI agent can call
@@ -102,14 +105,26 @@ def get_feasible_slots_tool(
 ) -> dict:
     """
     Find available dock slots for a shipment after the driver's revised ETA.
-    Only call this after you know the shipment ID and revised ETA.
-    Returns up to 5 compatible slots ordered by start time.
+    
+    Returns ranked slot options using explicit allocation policy.
+    Slots are scored by shipment priority, availability, and time-fit.
+    
+    Call this after you know: shipment_id, facility_id, revised ETA, required dock_type
+    
     dock_type must be one of: STANDARD, REEFER, HEAVY
     after_eta_ts must be ISO format e.g. 2026-08-04T11:20:00+05:30
+    
+    Each slot includes:
+    - slot_id: unique identifier
+    - rank: position in allocation ranking (1 = best)
+    - score: numerical allocation score
+    - start/end times: in IST
+    - allocation_reason: why this slot ranked here
     """
-    slots = get_feasible_slots(facility_id, dock_type, after_eta_ts)
+    # Get raw candidate slots from database
+    candidates = get_feasible_slots(facility_id, dock_type, after_eta_ts)
 
-    if not slots:
+    if not candidates:
         return {
             "available": False,
             "message": "No compatible slots found after the given ETA. Escalation recommended.",
@@ -117,39 +132,72 @@ def get_feasible_slots_tool(
             "searched_after": after_eta_ts
         }
 
-    # Check Redis holds — filter out slots held by other shipments
-    # Check Redis holds — filter out slots held by other shipments
-    from datetime import datetime, timezone, timedelta
+    # Filter out slots held by OTHER shipments (same shipment can refresh)
     IST = timezone(timedelta(hours=5, minutes=30))
 
     def to_ist(ts):
         dt = datetime.fromisoformat(ts.replace('Z', '+00:00'))
         return dt.astimezone(IST).strftime('%d %b %Y %I:%M %p IST')
 
-    available_slots = []
-    for slot in slots:
+    # Revalidate each candidate against current system state
+    valid_candidates = []
+    for slot in candidates:
         if is_slot_held_by_other(slot["slot_id"], shipment_id):
-            continue  # skip — another driver is actively considering this
-        available_slots.append({
-            "slot_id": slot["slot_id"],
-            "dock_id": slot["dock_id"],
-            "start_time": to_ist(slot["slot_start_ts"]),
-            "end_time": to_ist(slot["slot_end_ts"]),
-            "dock_type": slot["dock_type"],
-            "status": "AVAILABLE"
-        })
+            continue  # Another driver holds this slot
+        
+        # Check comprehensive feasibility
+        feasibility = validate_slot_against_current_state(
+            slot_id=slot["slot_id"],
+            shipment_id=shipment_id,
+            facility_id=facility_id,
+            required_dock_type=dock_type,
+            expected_unload_min=30  # Default, could be from shipment
+        )
+        
+        if feasibility["feasible"]:
+            valid_candidates.append(slot)
 
-    if not available_slots:
+    if not valid_candidates:
         return {
             "available": False,
-            "message": "All compatible slots are currently being processed by other requests. Try again in 2 minutes or escalate.",
+            "message": "All compatible slots are currently unavailable, held by other drivers, or no longer feasible. Try again in 2 minutes or escalate.",
         }
+
+    # Apply allocation policy to rank candidates
+    allocation = allocate_slot(
+        candidates=valid_candidates,
+        shipment_id=shipment_id,
+    )
+
+    # Format response with allocation ranking
+    slots_response = []
+    if allocation:
+        for rank_item in allocation["ranking"]:
+            # Find full slot data
+            full_slot = next(
+                (s for s in valid_candidates if s["slot_id"] == rank_item["slot_id"]),
+                None
+            )
+            if full_slot:
+                slots_response.append({
+                    "slot_id": rank_item["slot_id"],
+                    "dock_id": rank_item["dock_id"],
+                    "rank": rank_item["position"],
+                    "score": rank_item["score"],
+                    "start_time": to_ist(full_slot["slot_start_ts"]),
+                    "end_time": to_ist(full_slot["slot_end_ts"]),
+                    "dock_type": full_slot["dock_type"],
+                    "status": "AVAILABLE",
+                    "allocation_reason": rank_item["explanation"],
+                })
 
     return {
         "available": True,
-        "slots": available_slots,
-        "count": len(available_slots),
-        "note": "Show these options to the driver clearly. Do NOT book until driver explicitly confirms one."
+        "slots": slots_response,
+        "count": len(slots_response),
+        "allocation_policy_applied": True,
+        "allocation_reasoning": allocation["reason"] if allocation else "No allocation policy",
+        "note": "Slots are ranked by priority-based allocation policy. Slot #1 is recommended. Do NOT book until driver explicitly confirms one."
     }
 
 
@@ -189,12 +237,69 @@ def confirm_booking_tool(
 ) -> dict:
     """
     Confirm a slot booking after the driver explicitly agrees.
+    
+    CRITICAL: This tool performs revalidation before confirming to prevent
+    race conditions where a slot was shown to the driver but is no longer
+    available when they try to book it.
+    
     Only call this when the driver has clearly said YES to a specific slot.
-    This creates a PENDING_CONFIRMATION appointment in the database
-    and saves the revised ETA.
-    eta_confidence must be HIGH, MEDIUM, or LOW.
+    
+    This will:
+    1. Revalidate that the slot is still feasible
+    2. Save the revised ETA
+    3. Create a PENDING_CONFIRMATION appointment
+    4. Release the Redis hold
+    
+    Returns success/failure with detailed reason if revalidation fails.
     """
-    # Save the revised ETA first
+    
+    # Get shipment info needed for revalidation
+    shipment = get_shipment(shipment_id)
+    if not shipment:
+        return {
+            "success": False,
+            "reason": "Shipment not found",
+            "action": "Please try again or contact operations."
+        }
+    
+    facility_id = shipment.get("destination_facility_id")
+    dock_type = shipment.get("required_dock_type")
+    expected_unload_min = shipment.get("expected_unload_min", 30)
+    
+    # REVALIDATION STEP 1: Check if slot is still feasible
+    # This is the critical race-condition prevention check
+    feasibility = validate_slot_against_current_state(
+        slot_id=slot_id,
+        shipment_id=shipment_id,
+        facility_id=facility_id,
+        required_dock_type=dock_type,
+        expected_unload_min=expected_unload_min
+    )
+    
+    if not feasibility["feasible"]:
+        # Slot is no longer available
+        return {
+            "success": False,
+            "reason": "Slot is no longer available",
+            "failure_reasons": feasibility["reasons"],
+            "explanation": feasibility["explanation"],
+            "action": "The slot you selected was taken or became unavailable. Please request alternative slots and try again.",
+        }
+    
+    # REVALIDATION STEP 2: Check if we still hold this slot in Redis
+    # (hold may have expired or been released)
+    hold = is_slot_held_by_other(slot_id, shipment_id)
+    if hold:
+        # Different shipment holds it now
+        return {
+            "success": False,
+            "reason": "Slot hold expired or was taken by another request",
+            "action": "Please request alternative slots and try again.",
+        }
+    
+    run = get_current_run_tree()
+    
+    # BOOKING STEP 1: Save the revised ETA
     save_eta_update(
         shipment_id=shipment_id,
         eta_ts=revised_eta_ts,
@@ -203,12 +308,11 @@ def confirm_booking_tool(
         driver_id=driver_id
     )
 
-    # Book the appointment
+    # BOOKING STEP 2: Book the appointment
     appointment = book_appointment(shipment_id, slot_id)
-    run = get_current_run_tree()
+    
     success = "error" not in appointment
     outcome = "CONFIRMED" if success else "REJECTED_STALE_VERSION"
-    expected_version = "unknown"
 
     if not success:
         if run is not None:
@@ -217,16 +321,17 @@ def confirm_booking_tool(
                 "metadata": {
                     "slot_id": slot_id,
                     "shipment_id": shipment_id,
-                    "expected_version": expected_version,
                     "outcome": outcome,
+                    "reason": "Database booking failed",
                 }
             }
         return {
             "success": False,
-            "reason": "Booking failed in database. Please try again or escalate."
+            "reason": "Booking failed in database. Likely the slot was booked by another request just now.",
+            "action": "Please request alternative slots and try again.",
         }
 
-    # Release the Redis hold — slot is now properly booked in DB
+    # BOOKING STEP 3: Release the Redis hold — slot is now properly booked in DB
     release_hold(slot_id, shipment_id)
 
     if run is not None:
@@ -235,8 +340,8 @@ def confirm_booking_tool(
             "metadata": {
                 "slot_id": slot_id,
                 "shipment_id": shipment_id,
-                "expected_version": expected_version,
                 "outcome": outcome,
+                "revalidation": "PASSED",
             }
         }
 
@@ -245,7 +350,8 @@ def confirm_booking_tool(
         "appointment_id": appointment["appointment_id"],
         "status": "PENDING_CONFIRMATION",
         "message": "Appointment created. Awaiting warehouse confirmation.",
-        "note": "Tell the driver their new slot is booked and pending warehouse sign-off."
+        "note": "Tell the driver their new slot is booked and pending warehouse sign-off.",
+        "allocation_validated": True,
     }
 
 
