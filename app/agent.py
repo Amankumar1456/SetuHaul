@@ -83,7 +83,7 @@ def build_agent():
     agent = create_react_agent(
         model=llm,
         tools=ALL_TOOLS,
-        prompt=SYSTEM_PROMPT,
+        state_modifier=SYSTEM_PROMPT,
     )
     return agent
 
