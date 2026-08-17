@@ -1926,80 +1926,166 @@ Required indexes for performance:
 
 
 ## Master Flow 
-                         DRIVER
-                           │
-                           ▼
-                    ┌─────────────┐
-                    │     UI      │
-                    └──────┬──────┘
-                           │
-                           ▼
-                    ┌─────────────┐
-                    │ LLM / Agent │
-                    │             │
-                    │ Understand  │
-                    │ Context     │
-                    │ Tool Call   │
-                    └──────┬──────┘
-                           │
-                           ▼
-                ┌──────────────────────┐
-                │      TOOL LAYER      │
-                └──────────┬───────────┘
-                           │
-                           ▼
-                ┌──────────────────────┐
-                │     FEASIBILITY      │
-                │                      │
-                │ Can this driver use  │
-                │ this slot?           │
-                └──────────┬───────────┘
-                           │
-                           ▼
-                ┌──────────────────────┐
-                │      ALLOCATION      │
-                │                      │
-                │ Which feasible slot  │
-                │ should be preferred? │
-                └──────────┬───────────┘
-                           │
-                           ▼
-                    OPTIONS SHOWN
-                           │
-                           ▼
-                    DRIVER SELECTS
-                           │
-                           ▼
-                ┌──────────────────────┐
-                │    REVALIDATION      │
-                │                      │
-                │ Is it STILL valid?  │
-                └──────────┬───────────┘
-                           │
-                           ▼
-                ┌──────────────────────┐
-                │    REDIS HOLD        │
-                │                      │
-                │ Atomic / temporary   │
-                │ capacity protection  │
-                └──────────┬───────────┘
-                           │
-                           ▼
-                ┌──────────────────────┐
-                │    DB BOOKING        │
-                │                      │
-                │ Persistent state     │
-                └──────────┬───────────┘
-                           │
-                           ▼
-                      CONFIRMED
-                           │
-                           ▼
-                    ┌────────────┐
-                    │    OPS     │
-                    │  VERIFY    │
-                    └────────────┘
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              DRIVER / USER                                  │
+│                                                                             │
+│  "I'm going to be 2 hours late. Find me another slot."                     │
+└──────────────────────────────────┬──────────────────────────────────────────┘
+                                   │
+                                   ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              CHAT / UI                                      │
+│                                                                             │
+│  Conversation context • Booking context • Slot options • Confirmation      │
+└──────────────────────────────────┬──────────────────────────────────────────┘
+                                   │
+                                   ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                            LLM / AGENT                                      │
+│                                                                             │
+│  • Understand natural language                                             │
+│  • Identify intent                                                         │
+│  • Extract parameters                                                      │
+│  • Maintain conversational context                                         │
+│  • Decide which TOOL to invoke                                             │
+│                                                                             │
+│                    ⚠️ NOT the source of business truth                     │
+└──────────────────────────────────┬──────────────────────────────────────────┘
+                                   │
+                         Structured Tool Call
+                                   │
+                                   ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              TOOL LAYER                                     │
+│                                                                             │
+│  get_feasible_slots()                                                      │
+│  allocate_slot()                                                            │
+│  confirm_booking()                                                         │
+│  update_eta()                                                              │
+│  get_booking_status()                                                      │
+│                                                                             │
+│              Tools are the controlled boundary into the system              │
+└──────────────────────────────────┬──────────────────────────────────────────┘
+                                   │
+                                   ▼
+╔═════════════════════════════════════════════════════════════════════════════╗
+║                    DETERMINISTIC BUSINESS LOGIC                            ║
+║                                                                             ║
+║  ┌─────────────────────────┐       ┌──────────────────────────────────┐   ║
+║  │      FEASIBILITY        │       │           ALLOCATION             │   ║
+║  │                         │       │                                  │   ║
+║  │  Can this slot be used? │       │  Which feasible option should   │   ║
+║  │                         │       │  be preferred?                   │   ║
+║  │  • Slot exists          │       │                                  │   ║
+║  │  • Slot open            │       │  Priority                       │   ║
+║  │  • Not already booked   │       │  Time cost                      │   ║
+║  │  • Dock compatible      │       │  Congestion*                    │   ║
+║  │  • Unload fits          │       │                                  │   ║
+║  │  • Facility accepting   │       │  → Score                         │   ║
+║  │  • No conflict          │       │  → Rank                          │   ║
+║  └────────────┬────────────┘       └────────────────┬─────────────────┘   ║
+║               │                                     │                     ║
+║               └─────────────────┬───────────────────┘                     ║
+║                                 ▼                                         ║
+║                          FEASIBLE OPTIONS                                 ║
+╚═════════════════════════════════╤═══════════════════════════════════════════╝
+                                  │
+                                  ▼
+                         ┌───────────────────┐
+                         │   OPTIONS SHOWN   │
+                         │                   │
+                         │  Slot A           │
+                         │  Slot B           │
+                         │  Slot C           │
+                         └─────────┬─────────┘
+                                   │
+                            Driver selects
+                                   │
+                                   ▼
+╔═════════════════════════════════════════════════════════════════════════════╗
+║                         COMMITMENT PATH                                    ║
+║                                                                             ║
+║                      CURRENT-STATE REVALIDATION                            ║
+║                                                                             ║
+║          "Is the selected slot STILL actually available?"                  ║
+║                                                                             ║
+╚═════════════════════════════════╤═══════════════════════════════════════════╝
+                                  │
+                              PASS │ FAIL
+                                  │    └──────────────► Alternative /
+                                  │                     Failure / Escalation
+                                  ▼
+╔═════════════════════════════════════════════════════════════════════════════╗
+║                              REDIS                                         ║
+║                                                                             ║
+║                         ATOMIC HOLD                                        ║
+║                                                                             ║
+║             Driver A ──► SET NX ──► SUCCESS ──► HOLD                      ║
+║             Driver B ──► SET NX ──► FAIL    ──► CONFLICT                  ║
+║                                                                             ║
+║                  Temporary protection of scarce capacity                    ║
+║                  Hold expires after configured TTL                          ║
+╚═════════════════════════════════╤═══════════════════════════════════════════╝
+                                  │
+                                  ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         DATABASE / SYSTEM OF RECORD                         │
+│                                                                             │
+│                         BOOK APPOINTMENT                                    │
+│                                                                             │
+│               Persistent business state / confirmed booking                │
+└──────────────────────────────────┬──────────────────────────────────────────┘
+                                   │
+                                   ▼
+                           ┌───────────────┐
+                           │   CONFIRMED   │
+                           │               │
+                           │ Appointment   │
+                           │ persisted     │
+                           └───────┬───────┘
+                                   │
+                                   ▼
+                         Release temporary hold
+                                   │
+                                   ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              OPS / UI                                       │
+│                                                                             │
+│  Booking status • Operational visibility • Verification • Exceptions       │
+└─────────────────────────────────────────────────────────────────────────────┘
 
+
+### Conceptualization
+                         AI WORLD
+┌──────────────────────────────────────────────────────┐
+│                                                      │
+│  User → UI → LLM → Tool                              │
+│                                                      │
+│  Natural language / interpretation / orchestration   │
+│                                                      │
+└───────────────────────┬──────────────────────────────┘
+                        │
+                        │ controlled interface
+                        ▼
+                    BUSINESS WORLD
+┌──────────────────────────────────────────────────────┐
+│                                                      │
+│  Feasibility → Allocation → Revalidation             │
+│                                                      │
+│  Deterministic business decisions                    │
+│                                                      │
+└───────────────────────┬──────────────────────────────┘
+                        │
+                        │ commitment
+                        ▼
+                  CONSISTENCY WORLD
+┌──────────────────────────────────────────────────────┐
+│                                                      │
+│  Redis Hold → DB Transaction                         │
+│                                                      │
+│  Protect scarce capacity → Persist business truth   │
+│                                                      │
+└──────────────────────────────────────────────────────┘
 ## Summary: What This System Does
 
 **SetuHaul** is an **intelligent exception manager for freight logistics**:
