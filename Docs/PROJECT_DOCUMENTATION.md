@@ -129,6 +129,280 @@ Driver Message
 
 ---
 
+---
+
+## 🎬 Master Demo Flow — From Driver Message to Confirmed Booking
+
+> **Purpose:** This is the primary flow to use when demonstrating SetuHaul to a
+> Tech Lead, interviewer, architect, or buyer.
+>
+> It connects the **user-visible behavior → API → LLM → tools → deterministic
+> business logic → Redis concurrency protection → database persistence → Ops
+> verification**.
+>
+> All code references are relative to the repository root:
+>
+> `SetuHaul/`
+
+### The Demo Scenario
+
+The driver sends:
+
+> **"I'm stuck in traffic and will be 90 minutes late. Can you find me another slot?"**
+
+---
+
+### Master Flow
+
+```text
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         ① DRIVER / CHAT UI                                  │
+│                                                                             │
+│  Driver: "I'm stuck in traffic and will be 90 minutes late."               │
+│                                                                             │
+│  KEY FEATURE: Natural-language exception reporting                          │
+│  DEMO: Show the message being entered in chat.html                         │
+└───────────────────────────────────┬─────────────────────────────────────────┘
+                                    │
+                                    │ POST /chat
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         ② FASTAPI ENTRY POINT                               │
+│                                                                             │
+│  app/main.py                                                               │
+│                                                                             │
+│  Receives: driver_id + message                                             │
+│  Creates/retrieves conversation context                                    │
+│  Routes request to Agent Orchestrator                                      │
+│                                                                             │
+│  KEY FEATURE: Controlled API boundary                                      │
+│  DEMO: Open app/main.py → show /chat handler                               │
+└───────────────────────────────────┬─────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         ③ AGENT ORCHESTRATOR                                │
+│                                                                             │
+│  app/agent.py                                                              │
+│                                                                             │
+│  LLM + LangChain/LangGraph                                                 │
+│                                                                             │
+│  • Understand driver intent                                                │
+│  • Maintain conversation context                                           │
+│  • Select the appropriate deterministic tool                               │
+│  • Follow operational boundaries                                           │
+│                                                                             │
+│  IMPORTANT: LLM does NOT decide which slot to allocate                     │
+│  IMPORTANT: LLM does NOT directly modify DB/Redis                          │
+│                                                                             │
+│  KEY FEATURE: AI orchestration with deterministic backend boundaries        │
+│  DEMO: Open app/agent.py → show SYSTEM_PROMPT / tool binding               │
+└───────────────────────────────────┬─────────────────────────────────────────┘
+                                    │
+                                    │ Tool invocation
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         ④ DRIVER / SHIPMENT CONTEXT                         │
+│                                                                             │
+│  app/tools.py                                                              │
+│  lookup_driver_context                                                     │
+│                                                                             │
+│  Fetches authoritative operational facts:                                  │
+│  • Driver                                                                   │
+│  • Shipment                                                                  │
+│  • Current ETA                                                               │
+│  • Priority                                                                  │
+│  • Required dock type                                                        │
+│  • Existing appointment                                                      │
+│                                                                             │
+│  SOURCE OF FACTS: Supabase / PostgreSQL                                    │
+│                                                                             │
+│  KEY FEATURE: Agent reasons from system facts, not assumptions             │
+└───────────────────────────────────┬─────────────────────────────────────────┘
+                                    │
+                                    ▼
+╔═════════════════════════════════════════════════════════════════════════════╗
+║                    ⑤ DETERMINISTIC FEASIBILITY                             ║
+║                                                                             ║
+║  app/feasibility.py                                                        ║
+║  validate_slot_against_current_state()                                     ║
+║                                                                             ║
+║  Every candidate slot is checked against hard constraints:                 ║
+║                                                                             ║
+║  ✓ Slot exists                                                             ║
+║  ✓ Slot is OPEN                                                            ║
+║  ✓ Slot is not already booked                                              ║
+║  ✓ Dock type is compatible                                                 ║
+║  ✓ Unload duration fits                                                    ║
+║  ✓ Facility is accepting appointments                                     ║
+║  ✓ No current appointment conflict                                         ║
+║                                                                             ║
+║  OUTPUT: Feasible / Rejected + auditable reason codes                      ║
+║                                                                             ║
+║  KEY FEATURE: LLM cannot bypass operational constraints                    ║
+║  DEMO: Open app/feasibility.py and show the validation functions            ║
+╚═══════════════════════════════════════╤═════════════════════════════════════╝
+                                        │
+                                        │ Feasible candidates
+                                        ▼
+╔═════════════════════════════════════════════════════════════════════════════╗
+║                         ⑥ ALLOCATION / PRIORITY                             ║
+║                                                                             ║
+║  app/allocation.py                                                         ║
+║  score_slot() / allocate_slot()                                            ║
+║                                                                             ║
+║  Feasible ≠ Preferred                                                       ║
+║                                                                             ║
+║  The allocation policy ranks feasible candidates using deterministic       ║
+║  business rules.                                                           ║
+║                                                                             ║
+║  Priority examples:                                                        ║
+║      CRITICAL = 100                                                        ║
+║      HIGH     = 75                                                         ║
+║      NORMAL   = 50                                                         ║
+║      LOW      = 25                                                         ║
+║                                                                             ║
+║  Additional scoring considers time-fit and congestion cost.                ║
+║                                                                             ║
+║  OUTPUT: Ranked slots + allocation reasoning                               ║
+║                                                                             ║
+║  KEY FEATURE: Explainable deterministic allocation                          ║
+║  DEMO: Open app/allocation.py → show score_slot / allocate_slot             ║
+╚═══════════════════════════════════════╤═════════════════════════════════════╝
+                                        │
+                                        │ Ranked options
+                                        ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         ⑦ OPTIONS RETURNED TO DRIVER                        │
+│                                                                             │
+│  app/tools.py                                                              │
+│  get_feasible_slots_tool                                                   │
+│                                                                             │
+│  Example:                                                                   │
+│                                                                             │
+│    Rank 1 → 14:00 → Score 95.5 → "CRITICAL + earliest fit"                 │
+│    Rank 2 → 15:30 → Score 78.0                                             │
+│    Rank 3 → 17:00 → Score 70.0                                             │
+│                                                                             │
+│  IMPORTANT: Agent receives pre-ranked options.                              │
+│  Agent cannot override the allocation ranking.                             │
+│                                                                             │
+│  KEY FEATURE: Explainable slot recommendations                              │
+└───────────────────────────────────┬─────────────────────────────────────────┘
+                                    │
+                                    │ Driver selects slot
+                                    ▼
+╔═════════════════════════════════════════════════════════════════════════════╗
+║                       ⑧ CONFIRMATION BOUNDARY                              ║
+║                                                                             ║
+║  app/tools.py                                                              ║
+║  confirm_booking_tool()                                                    ║
+║                                                                             ║
+║                   DO NOT TRUST OLD AVAILABILITY                            ║
+║                                                                             ║
+║  REVALIDATION #1                                                           ║
+║       ↓                                                                     ║
+║  validate_slot_against_current_state()                                     ║
+║                                                                             ║
+║  REVALIDATION #2                                                           ║
+║       ↓                                                                     ║
+║  Verify Redis hold still exists                                             ║
+║                                                                             ║
+║  If either fails → reject stale request + return alternatives               ║
+║                                                                             ║
+║  KEY FEATURE: Protects against stale state / TOCTOU race                   ║
+║  DEMO: Show the revalidation section inside confirm_booking_tool            ║
+╚═══════════════════════════════════╤═════════════════════════════════════════╝
+                                    │
+                                    │ Validation passes
+                                    ▼
+╔═════════════════════════════════════════════════════════════════════════════╗
+║                         ⑨ REDIS ATOMIC HOLD                                 ║
+║                                                                             ║
+║  app/redis_client.py                                                       ║
+║  hold_slot / atomic SET NX EX                                              ║
+║                                                                             ║
+║                     SLOT = LIMITED RESOURCE                                ║
+║                                                                             ║
+║              Driver A                 Driver B                              ║
+║                 │                        │                                  ║
+║                 ▼                        ▼                                  ║
+║             SET NX                   SET NX                                ║
+║                 │                        │                                  ║
+║              SUCCESS                    FAIL                                ║
+║                 │                        │                                  ║
+║                 ▼                        ▼                                  ║
+║               HOLD                 "Slot unavailable"                      ║
+║                                                                             ║
+║  Hold TTL: 120 seconds                                                     ║
+║                                                                             ║
+║  KEY FEATURE: Atomic concurrency protection                                ║
+║  DEMO: Show Redis key / SET NX EX behavior                                  ║
+╚═══════════════════════════════════╤═════════════════════════════════════════╝
+                                    │
+                                    │ Hold acquired
+                                    ▼
+╔═════════════════════════════════════════════════════════════════════════════╗
+║                         ⑩ DATABASE COMMIT                                   ║
+║                                                                             ║
+║  app/database.py                                                          ║
+║  book_appointment()                                                        ║
+║                                                                             ║
+║  • Check for existing appointment                                          ║
+║  • Prevent duplicate retry                                                 ║
+║  • Create / return appointment                                              ║
+║  • Persist ETA update                                                       ║
+║                                                                             ║
+║  DATABASE = PERSISTENT BUSINESS STATE                                      ║
+║                                                                             ║
+║  KEY FEATURE: Idempotent booking                                           ║
+║  DEMO: Show existing-appointment check                                     ║
+╚═══════════════════════════════════╤═════════════════════════════════════════╝
+                                    │
+                                    │ Booking persisted
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         ⑪ RELEASE TEMPORARY HOLD                            │
+│                                                                             │
+│  app/tools.py                                                              │
+│  release_hold_tool()                                                       │
+│                                                                             │
+│  Redis temporary protection is released because the booking is now         │
+│  represented by persistent database state.                                 │
+│                                                                             │
+│  KEY FEATURE: Temporary concurrency state → persistent business state       │
+└───────────────────────────────────┬─────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         ⑫ CONFIRMED BOOKING                                │
+│                                                                             │
+│  Driver receives confirmation                                              │
+│                                                                             │
+│  DB contains appointment                                                   │
+│  Redis hold released                                                       │
+│  ETA update persisted                                                       │
+│                                                                             │
+│  KEY FEATURE: End-to-end automated exception resolution                    │
+└───────────────────────────────────┬─────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         ⑬ OPS VERIFICATION                                  │
+│                                                                             │
+│  GET /ops/verify/{shipment_id}                                             │
+│                                                                             │
+│  Verify:                                                                    │
+│  • Actual DB appointment                                                    │
+│  • Latest ETA                                                               │
+│  • Active Redis holds                                                       │
+│  • Final booking verdict                                                    │
+│                                                                             │
+│  KEY FEATURE: Operational auditability / independent verification          │
+│  DEMO: Open Ops Dashboard → verify the booking                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
 ## Technology Stack
 
 ### Backend
