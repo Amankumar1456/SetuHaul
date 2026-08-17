@@ -487,14 +487,14 @@
     function selectBooking(index) {
       const booking = sortedBookings()[index];
       if (!booking) return;
+
       sessionStorage.setItem('selected_booking', JSON.stringify(booking));
-      showChat();
+
       const shipment = booking.shipment_id || booking.shipment || 'this shipment';
       const facility = booking.facility_name || booking.destination_facility_id || booking.facility_id || 'your warehouse';
-      const input = document.getElementById('msgInput');
-      input.value = `I need help with my ${shipment} booking at ${facility}.`;
-      autoResize(input);
-      input.focus();
+
+      // Only selecting a booking tile is allowed to prepopulate the chat.
+      showChat(`I need help with my ${shipment} booking at ${facility}.`);
     }
 
     async function loadBookings() {
@@ -509,13 +509,28 @@
       }
     }
 
-    function showChat() {
+    function showChat(prefillMessage = null) {
       document.getElementById('bookingSection').classList.add('hidden');
       document.getElementById('chatArea').style.display = 'flex';
       document.getElementById('inputArea').style.display = 'flex';
       document.getElementById('threadBar').style.display = 'block';
       document.getElementById('agentHelpBtn').style.display = 'none';
       document.getElementById('chatBackBtn').style.display = 'block';
+
+      const input = document.getElementById('msgInput');
+
+      // showChat() with no argument is used by the floating help button.
+      // It must always open a clean input. Only selectBooking() passes
+      // a prefill message.
+      if (prefillMessage) {
+        input.value = prefillMessage;
+        autoResize(input);
+      } else {
+        input.value = '';
+        input.style.height = 'auto';
+      }
+
+      input.focus();
     }
 
     function showBookings() {
