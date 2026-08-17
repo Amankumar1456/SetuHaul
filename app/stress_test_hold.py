@@ -4,14 +4,12 @@ from concurrent.futures import ThreadPoolExecutor
 from langsmith import trace
 from app.tools import hold_slot_tool
 
-# Replace with a real slot_id from your DB — one that's currently OPEN
-SLOT_ID = "REPLACE_WITH_REAL_SLOT_ID"
+SLOT_ID = "SLOT-JAI-D1-001"
 
-# Three different shipments genuinely competing for that one slot
 DRIVERS = [
-    ("SHP1001", "DRV001"),
-    ("SHP1002", "DRV002"),
     ("SHP1003", "DRV003"),
+    ("SHP1004", "DRV004"),
+    ("SHP1005", "DRV005"),
 ]
 
 def attempt_hold(shipment_id, driver_id, scenario_id):

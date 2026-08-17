@@ -267,6 +267,19 @@ def release_hold_tool(slot_id: str, shipment_id: str) -> dict:
         }
     return result
 
+def send_escalation_email(exc_id: str, shipment_id: str, driver_id: str, urgency: str, reason: str) -> None:
+    """
+    Stub for escalation email notification.
+    Logs what WOULD be sent — replace with real SMTP/email service later.
+    """
+    print(
+        f"[ESCALATION EMAIL] To: HumanInTheLook@gmail.com | "
+        f"Ticket: {exc_id} | Urgency: {urgency} | "
+        f"Shipment: {shipment_id} | Driver: {driver_id} | Reason: {reason}"
+    )
+
+
+
 
 @tool
 @traceable(name="escalate_to_human", run_type="tool")
@@ -292,13 +305,14 @@ def escalate_to_human(
         urgency=urgency
     )
 
+    send_escalation_email(exc_id, shipment_id, driver_id, urgency, reason)
+
     return {
         "success": True,
         "escalation_id": exc_id,
         "urgency": urgency,
         "message": f"Escalated to human ops team. Reference: {exc_id}. A coordinator will contact the driver shortly."
     }
-
 
 # ── Export all tools as a list for the agent ──────────────────────────────────
 # This is what we pass to LangChain when building the agent
