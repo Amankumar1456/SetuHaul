@@ -8,6 +8,7 @@ from app.redis_client import get_all_active_holds
 from app.database import supabase, get_driver
 import logging
 from fastapi.responses import StreamingResponse
+from datetime import datetime, timezone, timedelta
 import json
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -165,6 +166,30 @@ def chat(request: ChatRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/chat/test-location")
+def get_test_location():
+    """Get a test driver location for demo/testing purposes."""
+    try:
+        from app.routing import RoutingEngine
+        # Get all test locations
+        locations = RoutingEngine.get_all_test_locations()
+        if locations:
+            # Return the first test location as default
+            first_key = list(locations.keys())[0]
+            first_loc = locations[first_key]
+            return {
+                "success": True,
+                "latitude": first_loc.latitude,
+                "longitude": first_loc.longitude,
+                "name": first_loc.name,
+                "description": f"{first_loc.name} - Test location for demonstration",
+                "calculation_method": "HARDCODED"
+            }
+        else:
+            return {"success": False, "error": "No test locations available"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Ops dashboard endpoints
 # ─────────────────────────────────────────────────────────────────────────────
@@ -246,6 +271,142 @@ def get_threads():
             "opened_at", desc=True
         ).limit(50).execute()
         return {"threads": result.data, "count": len(result.data)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Warehouse Dashboard Endpoints (Phase 5)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.get("/warehouse/{warehouse_id}/resources")
+def get_warehouse_resources(warehouse_id: str):
+    """Get resource availability for a warehouse (drivers, trucks, staff, machinery)."""
+    try:
+        from app.database import get_resource_pool
+        
+        # Fetch resource pool for this warehouse
+        resources = get_resource_pool(warehouse_id)
+        
+        return {
+            "success": True,
+            "warehouse_id": warehouse_id,
+            "resources": resources,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/warehouse/{warehouse_id}/yard")
+def get_warehouse_yard(warehouse_id: str):
+    """Get current yard state for a warehouse (trucks in yard and pending arrivals)."""
+    try:
+        from app.database import get_trucks_in_yard, get_facility
+        
+        # Get trucks currently in yard
+        trucks_in_yard = get_trucks_in_yard(warehouse_id)
+        
+        # Get pending arrivals (shipments with ETA arriving at this warehouse in next 2 hours)
+        now = datetime.now(timezone.utc)
+        future = now + timedelta(hours=2)
+        
+        pending_result = supabase.table("eta_updates").select(
+            "*, shipments(shipment_id, driver_id)"
+        ).eq("destination_facility_id", warehouse_id).gte(
+            "declared_eta_ts", now.isoformat()
+        ).lte(
+            "declared_eta_ts", future.isoformat()
+        ).order("declared_eta_ts").execute()
+        
+        arrivals = [
+            {
+                "truck_id": f"TRK-{e.get('shipments', {}).get('shipment_id', 'UNKNOWN')[:8]}",
+                "shipment_id": e.get("shipments", {}).get("shipment_id"),
+                "eta_ts": e.get("declared_eta_ts"),
+                "status": "ARRIVING"
+            }
+            for e in (pending_result.data or [])
+        ]
+        
+        return {
+            "success": True,
+            "warehouse_id": warehouse_id,
+            "trucks_in_yard": trucks_in_yard,
+            "arriving_trucks": arrivals,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/warehouse/{warehouse_id}/slots")
+def get_warehouse_slots(warehouse_id: str):
+    """Get slot timeline for a warehouse (next 24 hours across all gates)."""
+    try:
+        # Get slots for next 24 hours
+        now = datetime.now(timezone.utc)
+        tomorrow = now + timedelta(hours=24)
+        
+        result = supabase.table("appointment_slots").select(
+            "slot_id, facility_id, gate_id, slot_start_ts, slot_end_ts, status"
+        ).eq("facility_id", warehouse_id).gte(
+            "slot_start_ts", now.isoformat()
+        ).lte(
+            "slot_start_ts", tomorrow.isoformat()
+        ).order("slot_start_ts").execute()
+        
+        return {
+            "success": True,
+            "warehouse_id": warehouse_id,
+            "slots": result.data if result.data else [],
+            "count": len(result.data) if result.data else 0,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/warehouse/{warehouse_id}/escalations")
+def get_warehouse_escalations(warehouse_id: str):
+    """Get escalations for a specific warehouse."""
+    try:
+        # Get open escalations related to this warehouse
+        result = supabase.table("driver_exceptions").select(
+            "exception_id, shipment_id, driver_id, exception_type, reported_at, "
+            "exception_status, notes"
+        ).eq("exception_status", "OPEN").order(
+            "reported_at", desc=True
+        ).execute()
+        
+        # Filter by warehouse (shipments going to this warehouse)
+        escalations = []
+        if result.data:
+            for exc in result.data:
+                if exc.get("shipment_id"):
+                    # Check if shipment is for this warehouse
+                    shipment = supabase.table("shipments").select(
+                        "destination_facility_id"
+                    ).eq("shipment_id", exc["shipment_id"]).limit(1).execute()
+                    
+                    if shipment.data and shipment.data[0].get("destination_facility_id") == warehouse_id:
+                        escalations.append({
+                            "escalation_id": exc.get("exception_id"),
+                            "shipment_id": exc.get("shipment_id"),
+                            "driver_id": exc.get("driver_id"),
+                            "exception_type": exc.get("exception_type"),
+                            "urgency": "HIGH" if exc.get("exception_type") == "ESCALATED" else "MEDIUM",
+                            "reason": exc.get("notes", ""),
+                            "reported_at": exc.get("reported_at"),
+                            "status": exc.get("exception_status"),
+                        })
+        
+        return {
+            "success": True,
+            "warehouse_id": warehouse_id,
+            "escalations": escalations,
+            "count": len(escalations),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

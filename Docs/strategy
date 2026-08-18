@@ -1,0 +1,65 @@
+# Change the system prompt such a way that when the driver query is recived if thiese data is not present it asks followup questions based on the aspect andthe logic
+
+Resolution Strategies for Specific Exceptions
+To better resolve situational crises, the system must extract specific parameters to feed the Scheduling Engine
+.
+Mechanical Failure (e.g., Tyre damage/Breakdown):
+Aspect Needed: "Repair Duration" + "Current Location."
+Logic: The system must not just add delay but calculate a new Route ETA after the repair is finished
+. If the repair pushes the arrival past the facility's close_time, the shipment must automatically move to an ON_HOLD state for the next operational window
+.
+Driver Sickness:
+Aspect Needed: "Current Warehouse" of idle drivers
+.
+Logic: Trigger the Resource Management module to find an available driver at the same physical warehouse location. Prioritize "Home-Base" drivers to minimize repositioning costs
+.
+Police Checkpoints / Traffic Congestion:
+Aspect Needed: "Location Snapshot" freshness
+.
+Logic: If the actual_gate_in_at time is missed, the agent re-invokes get_feasible_slots using the routing service to provide options that account for the real-time traffic delay verified by GPS
+.
+Natural Calamities / Long-term Halts:
+Aspect Needed: "Facility Capacity Change" event
+.
+Logic: When a facility is blocked, the TMS Orchestrator must mass-update all TRUCK_EXPECTED shipments to ON_HOLD or DELAYED, preventing the agent from making promises for a closed warehouse
+
+
+ # intruding location based help 
+ - when the driver sneds a message  and we sendit to the llm to process include in the system prompt that will we need the current location of the driver to as per the required parameters of resolution. if yes it should show a button on the driverchat interface to send one time location ( which here in our case we aer going to put a static location between two warehouses warehouse a and warehouse b ) so that eta calculation can be done.
+ - Instrumental Role of Warehouse Location
+The warehouse location (Lat/Long) is the anchor for all Transit Management
+.
+Distance Calculation: It is essential to store these in Application Layer 2 to calculate travel duration (Departure Time + Expected Duration = Destination ETA)
+.
+Slot Selection: Without the warehouse coordinate, the system cannot use the Geoapify Routing API to provide the route-based ETA that proves if a driver's rebooking request is physically possible
+.
+Reverse-Trip Priority: By tracking the Current Physical Warehouse of drivers/trucks relative to their Assigned/Home Warehouse, you can use location data to prioritize shipments that get resources back to their base, reducing empty miles
+.
+Execution Recommendation
+Start by updating your database.py to include the 10 Application Layers defined in the source (Identity, Warehouse, Resource, Shipment, Scheduling, Yard, ETA, Tracking, Notification, Reporting)
+. This modularity ensures your UI represents the workflow while your domain modules own the deterministic business rules
+
+# Chat interface changes 
+- after the user has sent a query can we show a typing loading animation untill response is recieved.
+- can we highlight the importand parts of the response when showed on the chat interfacelet it be the driver chat or th eops chat
+
+# Dashboard changes 
+Web UI Dashboard Implementation (Destination Warehouse Focus)
+The dashboard must be modular, representing one card or section per warehouse (A-F) to manage the specific operational view of each site
+.
+Warehouse Operational Section (Repeated for A, B, C, D, E, F)
+Resource Summary: Real-time counters for available Drivers, Trucks, Staff, and Machinery currently physically present at that location
+.
+Slot Timeline: A visual calendar showing Gate-level occupancy (e.g., Gates A1-A6) with color-coded status: Confirmed, Pending, or In-Progress
+.
+Yard Snapshot: A live feed of trucks currently "Arrived" (in yard), "Docked" (unloading), or "Upcoming" (expected based on ETA)
+.
+Integrated Escalation & Admin Control
+The dashboard correlates each warehouse view with an Escalation Panel. As an FDE Architect, the following logic must be executed:
+Contextual Routing: Escalations are automatically tagged by Warehouse ID and Urgency (LOW to CRITICAL)
+.
+Actionable Tickets: Every escalation must display the Shipment ID, Reason (e.g., "No slots available within 3 hours"), and a Thread Link to the driver conversation
+.
+Manual Overrides: The Admin uses this section to handle "out-of-scope" decisions such as commercial penalty approvals or overriding physical safety constraints that the AI is prohibited from deciding
+.
+Auditability: Every resolution in this section generates a SHIPMENT_RESOLVED event, capturing the actor ID and previous state for historical traceability

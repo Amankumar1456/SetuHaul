@@ -6,7 +6,8 @@ from langchain_core.tools import tool
 from langgraph.prebuilt import create_react_agent
 from app.tools import ALL_TOOLS
 from app.redis_client import get_conversation, save_conversation
-from app.database import get_or_create_thread, save_chat_message
+from app.database import get_or_create_thread, save_chat_message, log_decision
+from app.intent_detector import ExceptionType
 # from anthropic import Anthropic
 from langsmith import traceable
 from langsmith.run_helpers import get_current_run_tree
@@ -191,17 +192,119 @@ TONE & LANGUAGE
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# DYNAMIC SYSTEM PROMPT BASED ON EXCEPTION TYPE
+# ─────────────────────────────────────────────────────────────────────────────
+
+EXCEPTION_TYPE_GUIDANCE = {
+    ExceptionType.MECHANICAL_FAILURE: """
+EXCEPTION TYPE: MECHANICAL FAILURE (breakdown, damage, etc.)
+YOUR PRIORITY:
+1. Confirm repair time estimate and current location
+2. Check if driver can reach a facility or needs replacement
+3. If repair time < 2 hours: Find slots after revised ETA
+4. If repair time > 2 hours: Consider driver replacement or reschedule
+5. Ask: "Can you reach a safe location?" "Do you need a replacement truck?"
+
+DO NOT assume driver can continue — prioritize safety first.
+""",
+    
+    ExceptionType.DRIVER_SICKNESS: """
+EXCEPTION TYPE: DRIVER SICKNESS (health issue, fatigue, emergency)
+YOUR PRIORITY:
+1. Confirm driver's current warehouse/location and health status
+2. Evaluate severity: Can they continue or must we replace them?
+3. If continuing: Find slots with revised ETA (usually later same day)
+4. If replacement needed: Escalate immediately with shipment details
+5. Ask: "Where are you now?" "How serious is this?" "Can you drive or do you need help?"
+
+SAFETY FIRST. If driver is unwell, escalate to find replacement.
+""",
+    
+    ExceptionType.TRAFFIC_CONGESTION: """
+EXCEPTION TYPE: TRAFFIC/CONGESTION DELAY
+YOUR PRIORITY:
+1. Confirm current location and revised ETA (ask: "How much delay? How late will you be?")
+2. Call get_feasible_slots_tool with NEW revised ETA
+3. Find slots after the revised ETA — these become your options
+4. Present ranked slots (highest priority first)
+5. Confirm driver choice and book
+
+This is the most common exception — stay focused on revised ETA and feasible slots.
+""",
+    
+    ExceptionType.POLICE_CHECKPOINT: """
+EXCEPTION TYPE: POLICE CHECKPOINT/INSPECTION DELAY
+YOUR PRIORITY:
+1. Confirm current location and estimated delay ("How long will inspection take?")
+2. Calculate revised ETA = current_time + delay
+3. Find slots after revised ETA
+4. If driver is stuck > 1 hour and no feasible slots exist: Escalate
+5. Do NOT make assumptions about inspection duration — ask driver
+
+Police delays are unpredictable. Get best estimate, find slots, escalate if stuck.
+""",
+    
+    ExceptionType.FACILITY_BLOCKED: """
+EXCEPTION TYPE: FACILITY BLOCKED/FULL/UNAVAILABLE
+YOUR PRIORITY:
+1. Confirm which warehouse is full/blocked
+2. Ask: "Which facility are you headed to?" "When do you plan to arrive?"
+3. Find alternative warehouses OR find later slots at same warehouse
+4. If no alternatives exist: Escalate to human ops (facility might be opening later)
+5. DO NOT promise re-booking without finding actual available slots first
+
+Facility issues require ops team coordination. Find slot alternatives or escalate.
+""",
+    
+    ExceptionType.GENERIC_DELAY: """
+EXCEPTION TYPE: GENERIC/UNKNOWN DELAY
+YOUR PRIORITY:
+1. Ask clarification: "Why are you delayed? What happened?"
+2. Once you understand, detect the specific exception type
+3. Apply the relevant guidance above
+4. If still unclear: Ask driver for revised ETA and search for slots
+
+Start by getting more information about the delay.
+""",
+}
+
+
+def build_dynamic_system_prompt(exception_type: ExceptionType = None) -> str:
+    """
+    Build system prompt with exception-type-specific guidance.
+    
+    If exception_type is None, returns base prompt only.
+    If exception_type is provided, appends exception-specific guidance.
+    """
+    prompt = SYSTEM_PROMPT
+    
+    if exception_type and exception_type in EXCEPTION_TYPE_GUIDANCE:
+        prompt += "\n" + EXCEPTION_TYPE_GUIDANCE[exception_type]
+    
+    return prompt
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # BUILD AGENT
 # LangChain 1.x uses create_react_agent from langgraph
 # This is simpler and more stable than the old AgentExecutor approach
 # ─────────────────────────────────────────────────────────────────────────────
 
-def build_agent():
+def build_agent(system_prompt: str = None):
+    """
+    Build the React agent with optional custom system prompt.
+    
+    Args:
+        system_prompt: Custom system prompt (default: base SYSTEM_PROMPT)
+    """
+    if system_prompt is None:
+        system_prompt = SYSTEM_PROMPT
+    
     llm = get_llm()
     agent = create_react_agent(
         model=llm,
-        tools=ALL_TOOLS,# TODO: filter tools based on driver context 
-        state_modifier=SYSTEM_PROMPT, # TODO: consider adding a dynamic system prompt based on driver context
+        tools=ALL_TOOLS,
+        state_modifier=system_prompt,
     )
     return agent
 
@@ -218,10 +321,11 @@ def run_agent(driver_id: str, message: str) -> str:
     Steps:
     1. Get or create conversation thread
     2. Load conversation history from Redis
-    3. Run the agent
-    4. Save updated history to Redis
-    5. Save messages to Supabase permanently
-    6. Return response
+    3. Detect exception type to use dynamic system prompt
+    4. Run the agent
+    5. Save updated history to Redis
+    6. Save messages to Supabase permanently
+    7. Return response
     """
     run = get_current_run_tree()
     if run is not None:
@@ -242,8 +346,68 @@ def run_agent(driver_id: str, message: str) -> str:
         elif msg["role"] == "assistant":
             chat_history.append(AIMessage(content=msg["content"]))
 
-    # Step 3 — build and run agent
-    agent = build_agent()
+    # Step 3 — detect exception type for dynamic prompt
+    from app.intent_detector import get_detector
+    detector = get_detector()
+    exception_context = detector.detect_exception_type(message, thread_id)
+    
+    # Log the exception detection
+    try:
+        log_decision(
+            decision_type="EXCEPTION_DETECTION",
+            actor_id=driver_id,
+            actor_type="DRIVER",
+            affected_shipment_id=None,
+            decision_data={
+                "exception_type": exception_context.exception_type.value,
+                "confidence": exception_context.confidence,
+                "message": message[:200]  # First 200 chars of message
+            },
+            reasoning=exception_context.reasoning
+        )
+    except Exception:
+        pass  # Don't fail on logging
+    
+    # Step 3.5 — Run exception handler analysis (Phase 6)
+    # Get conversation state accumulated from history
+    conversation_state = detector.get_conversation_state(thread_id)
+    
+    handler_enhancement = ""
+    try:
+        from app.handler_integration import get_integration_pipeline
+        pipeline = get_integration_pipeline()
+        
+        # Get shipment ID if available (would be in database lookup)
+        # For now, use a default or extract from message context
+        shipment_id = "EXTRACTING"  # Placeholder
+        warehouse_id = "FAC-001"  # Default warehouse
+        
+        pipeline_result = pipeline.run_pipeline(
+            driver_id=driver_id,
+            message=message,
+            conversation_id=thread_id,
+            shipment_id=shipment_id,
+            warehouse_id=warehouse_id,
+            conversation_state=conversation_state,
+            driver_lat=None,
+            driver_lng=None,
+        )
+        
+        # Get prompt enhancement from handler analysis
+        handler_enhancement = pipeline.get_agent_enhancement_prompt(pipeline_result)
+    except Exception as e:
+        # Don't fail on handler error, just skip enhancement
+        print(f"Handler integration warning: {e}")
+    
+    # Build dynamic system prompt based on exception type
+    system_prompt = build_dynamic_system_prompt(exception_context.exception_type)
+    
+    # Append handler recommendations if available
+    if handler_enhancement:
+        system_prompt = system_prompt + handler_enhancement
+
+    # Step 4 — build and run agent
+    agent = build_agent(system_prompt=system_prompt)
 
     # Combine history + new message
     all_messages = chat_history + [
@@ -269,12 +433,12 @@ def run_agent(driver_id: str, message: str) -> str:
     except Exception as e:
         response = f"System error: {str(e)}. Please try again or contact operations directly."
 
-    # Step 4 — save to Redis
+    # Step 5 — save to Redis
     raw_history.append({"role": "human", "content": message})
     raw_history.append({"role": "assistant", "content": response})
     save_conversation(thread_id, raw_history)
 
-    # Step 5 — save to Supabase
+    # Step 6 — save to Supabase
     try:
         save_chat_message(thread_id, "DRIVER", message)
         save_chat_message(thread_id, "AGENT", response)
