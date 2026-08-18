@@ -1,0 +1,219 @@
+@import "tailwindcss" source(none);
+@source "../src";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * SetuHaul design system — light industrial control-tower aesthetic.
+ * Steel greys, deep ink, amber signal accent, mono numerals.
+ */
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 2px);
+  --radius-md: var(--radius);
+  --radius-lg: calc(var(--radius) + 2px);
+  --radius-xl: calc(var(--radius) + 6px);
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, monospace;
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-signal: var(--signal);
+  --color-signal-foreground: var(--signal-foreground);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-info: var(--info);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
+:root {
+  --radius: 0.375rem;
+  --background: oklch(0.968 0.004 250);
+  --surface: oklch(1 0 0);
+  --foreground: oklch(0.235 0.021 254);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.235 0.021 254);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.235 0.021 254);
+  --primary: oklch(0.32 0.043 252);
+  --primary-foreground: oklch(0.985 0.003 250);
+  --secondary: oklch(0.941 0.006 250);
+  --secondary-foreground: oklch(0.32 0.043 252);
+  --muted: oklch(0.951 0.005 250);
+  --muted-foreground: oklch(0.53 0.019 254);
+  --accent: oklch(0.934 0.012 250);
+  --accent-foreground: oklch(0.28 0.036 252);
+  --destructive: oklch(0.556 0.196 26);
+  --destructive-foreground: oklch(0.99 0.002 250);
+  --signal: oklch(0.735 0.156 63);
+  --signal-foreground: oklch(0.24 0.04 60);
+  --success: oklch(0.585 0.121 156);
+  --warning: oklch(0.735 0.156 63);
+  --info: oklch(0.552 0.126 245);
+  --border: oklch(0.898 0.008 250);
+  --input: oklch(0.898 0.008 250);
+  --ring: oklch(0.552 0.126 245);
+  --chart-1: oklch(0.552 0.126 245);
+  --chart-2: oklch(0.585 0.121 156);
+  --chart-3: oklch(0.735 0.156 63);
+  --chart-4: oklch(0.556 0.196 26);
+  --chart-5: oklch(0.53 0.019 254);
+  --sidebar: oklch(0.985 0.003 250);
+  --sidebar-foreground: oklch(0.235 0.021 254);
+  --sidebar-primary: oklch(0.32 0.043 252);
+  --sidebar-primary-foreground: oklch(0.985 0.003 250);
+  --sidebar-accent: oklch(0.934 0.012 250);
+  --sidebar-accent-foreground: oklch(0.28 0.036 252);
+  --sidebar-border: oklch(0.898 0.008 250);
+  --sidebar-ring: oklch(0.552 0.126 245);
+}
+
+.dark {
+  --background: oklch(0.19 0.018 254);
+  --surface: oklch(0.235 0.021 254);
+  --foreground: oklch(0.965 0.004 250);
+  --card: oklch(0.235 0.021 254);
+  --card-foreground: oklch(0.965 0.004 250);
+  --popover: oklch(0.235 0.021 254);
+  --popover-foreground: oklch(0.965 0.004 250);
+  --primary: oklch(0.9 0.01 250);
+  --primary-foreground: oklch(0.235 0.021 254);
+  --secondary: oklch(0.29 0.022 254);
+  --secondary-foreground: oklch(0.965 0.004 250);
+  --muted: oklch(0.29 0.022 254);
+  --muted-foreground: oklch(0.72 0.015 254);
+  --accent: oklch(0.31 0.024 254);
+  --accent-foreground: oklch(0.965 0.004 250);
+  --border: oklch(1 0 0 / 12%);
+  --input: oklch(1 0 0 / 16%);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+}
+
+@utility label-xs {
+  font-size: 10px;
+  line-height: 1.2;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--color-muted-foreground);
+}
+
+@utility panel {
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  box-shadow: 0 1px 2px oklch(0.24 0.02 254 / 0.05);
+}
+
+@utility panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.625rem 1rem;
+  border-bottom: 1px solid var(--color-border);
+  background: linear-gradient(
+    to bottom,
+    oklch(0.981 0.003 250),
+    oklch(0.966 0.004 250)
+  );
+}
+
+@utility status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.125rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+@utility status-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background-color: currentColor;
+}
+
+@utility status-good {
+  color: var(--color-success);
+  background-color: oklch(0.585 0.121 156 / 0.08);
+}
+
+@utility status-live {
+  color: var(--color-info);
+  background-color: oklch(0.552 0.126 245 / 0.08);
+}
+
+@utility status-warn {
+  color: oklch(0.62 0.15 63);
+  background-color: oklch(0.735 0.156 63 / 0.12);
+}
+
+@utility status-bad {
+  color: var(--color-destructive);
+  background-color: oklch(0.556 0.196 26 / 0.08);
+}
+
+@utility status-info {
+  color: var(--color-muted-foreground);
+  background-color: var(--color-muted);
+}
+
+@utility status-muted {
+  color: var(--color-muted-foreground);
+  background-color: var(--color-muted);
+}
+
+@utility grid-lines {
+  background-image:
+    linear-gradient(to right, var(--color-border) 1px, transparent 1px);
+  background-size: 12.5% 100%;
+}
