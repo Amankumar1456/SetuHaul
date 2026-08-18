@@ -29,7 +29,13 @@ app = FastAPI(
     description="AI agent for handling driver delays and dock slot coordination",
     version="1.0.0"
 )
-
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # tighten to your actual frontend URL before production
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 # Serve frontend files
 app.mount("/static", StaticFiles(directory="frontend"), name="static")
 
