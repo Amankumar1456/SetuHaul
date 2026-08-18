@@ -1,15 +1,25 @@
-import { Bot, LogOut, RefreshCw, Send } from "lucide-react";
+import { Bot, LogOut, RefreshCw, Send, MapPin } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { InternalTopBar, Panel, StatusPill } from "@/components/setuhaul/ui";
+import { TypingAnimation } from "@/components/setuhaul/typing-animation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { API_BASE } from "@/lib/api";
+import {
+  extractExceptionType,
+  getExceptionLabel,
+  extractFollowUpQuestions,
+  formatMessage,
+  parseLocationResponse,
+  generateLocationMessage,
+} from "@/lib/message-utils";
 import type { RealDriver } from "@/routes/driver";
 
 interface Msg {
   role: "driver" | "assistant";
   text: string;
+  exceptionType?: string;
 }
 
 interface RealShipment {
@@ -47,6 +57,7 @@ export function DriverWorkspace({
   ]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const [sharingLocation, setSharingLocation] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
 
   async function loadShipments() {
@@ -72,6 +83,47 @@ export function DriverWorkspace({
 
   const push = (m: Msg) => setMsgs((prev) => [...prev, m]);
 
+  /**
+   * Share location with the agent
+   * Uses test location for demonstration
+   */
+  async function shareLocation() {
+    setSharingLocation(true);
+    try {
+      // Fetch test location (first one available)
+      const res = await fetch(`${API_BASE}/chat/test-location`);
+      const data = await res.json();
+
+      if (data.success || data.latitude) {
+        const location = parseLocationResponse(data);
+        if (location) {
+          // Generate location message
+          const locationMessage = generateLocationMessage(location);
+          
+          // Send to agent with location data
+          await handle(locationMessage);
+        }
+      } else if (data.available_locations) {
+        // Pick first available location
+        const locations = Object.values(data.available_locations)[0] as any;
+        if (locations && locations.latitude) {
+          const locationMessage = generateLocationMessage({
+            latitude: locations.latitude,
+            longitude: locations.longitude,
+            name: locations.name,
+          });
+          await handle(locationMessage);
+        }
+      }
+    } catch (e) {
+      push({
+        role: "assistant",
+        text: "⚠️ Could not retrieve location. Please check your connection.",
+      });
+    }
+    setSharingLocation(false);
+  }
+
   async function handle(text: string) {
     if (!text.trim() || sending) return;
     push({ role: "driver", text });
@@ -85,7 +137,17 @@ export function DriverWorkspace({
         body: JSON.stringify({ driver_id: driver.driver_id, message: text }),
       });
       const data = await res.json();
-      push({ role: "assistant", text: data.response ?? "No response received." });
+      const responseText = data.response ?? "No response received.";
+      
+      // Extract exception type if mentioned in response
+      const exceptionType = extractExceptionType(responseText);
+      
+      push({
+        role: "assistant",
+        text: responseText,
+        exceptionType: exceptionType || undefined,
+      });
+      
       // Refresh bookings in case the message resulted in a booking change
       loadShipments();
     } catch (e) {
@@ -158,27 +220,77 @@ export function DriverWorkspace({
           <Panel title="AI assistant" icon={Bot} className="flex min-h-[560px] flex-col">
             <div className="flex h-full flex-col">
               <div className="flex-1 space-y-3 overflow-y-auto pr-1">
-                {msgs.map((m, i) => (
-                  <div
-                    key={i}
-                    className={
-                      m.role === "driver"
-                        ? "ml-auto max-w-[75%] rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground"
-                        : "max-w-[85%] whitespace-pre-line rounded-md bg-muted px-3 py-2 text-sm"
-                    }
-                  >
-                    {m.text}
-                  </div>
-                ))}
+                {msgs.map((m, i) => {
+                  const followUpQuestions =
+                    m.role === "assistant" ? extractFollowUpQuestions(m.text) : [];
+                  const formattedText =
+                    m.role === "assistant" ? formatMessage(m.text) : m.text;
+
+                  return (
+                    <div key={i} className="flex flex-col gap-2">
+                      <div
+                        className={
+                          m.role === "driver"
+                            ? "ml-auto max-w-[75%] rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground"
+                            : "max-w-[85%] whitespace-pre-line rounded-md bg-muted px-3 py-2 text-sm"
+                        }
+                        dangerouslySetInnerHTML={
+                          m.role === "assistant"
+                            ? { __html: formattedText }
+                            : undefined
+                        }
+                      >
+                        {m.role === "driver" ? m.text : undefined}
+                      </div>
+
+                      {/* Show exception type badge */}
+                      {m.exceptionType && m.role === "assistant" && (
+                        <div className="flex gap-1.5">
+                          <span className="rounded-full bg-yellow-100 px-2.5 py-1 text-xs font-medium text-yellow-900 dark:bg-yellow-900/20 dark:text-yellow-300">
+                            🚨 {getExceptionLabel(m.exceptionType)}
+                          </span>
+                        </div>
+                      )}
+
+                      {/* Show follow-up questions */}
+                      {followUpQuestions.length > 0 && m.role === "assistant" && (
+                        <div className="flex flex-col gap-1.5 rounded-md border border-blue-200 bg-blue-50/50 p-2.5 dark:border-blue-900/30 dark:bg-blue-950/20">
+                          <span className="text-xs font-semibold text-blue-900 dark:text-blue-300">
+                            💬 Follow-up needed:
+                          </span>
+                          <div className="space-y-1.5">
+                            {followUpQuestions.map((q, qIdx) => (
+                              <div
+                                key={qIdx}
+                                className="text-xs text-blue-800 dark:text-blue-200"
+                              >
+                                • {q}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
                 {sending ? (
-                  <div className="max-w-[85%] rounded-md bg-muted px-3 py-2 text-sm text-muted-foreground">
-                    Thinking...
+                  <div className="max-w-[85%] rounded-md bg-muted px-3 py-2">
+                    <TypingAnimation />
                   </div>
                 ) : null}
                 <div ref={endRef} />
               </div>
 
               <div className="mt-3 flex flex-wrap gap-1.5 border-t border-border pt-3">
+                <button
+                  onClick={shareLocation}
+                  disabled={sending || sharingLocation}
+                  title="Share your current location (test location)"
+                  className="rounded-full border border-border bg-blue-50 px-2.5 py-1 text-[11px] text-blue-700 hover:border-blue-300 hover:bg-blue-100 disabled:opacity-50 dark:bg-blue-950/30 dark:text-blue-300 dark:hover:border-blue-700 dark:hover:bg-blue-950/50"
+                >
+                  <MapPin className="mr-1 inline size-3" />
+                  {sharingLocation ? "Sharing..." : "📍 Share Location"}
+                </button>
                 {QUICK.map((s) => (
                   <button
                     key={s}

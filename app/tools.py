@@ -17,10 +17,14 @@ from app.database import (
     save_eta_update,
     save_escalation,
     get_or_create_thread,
+    save_eta_update_with_location,
+    log_decision,
 )
 from app.redis_client import place_hold, release_hold, is_slot_held_by_other
 from app.allocation import allocate_slot
 from app.feasibility import validate_slot_against_current_state
+from app.intent_detector import get_detector
+from app.routing import RoutingEngine, get_test_locations_list
 
 # ─────────────────────────────────────────────────────────────────────────────
 # TOOLS — these are the functions the AI agent can call
@@ -561,6 +565,146 @@ def get_ops_summary() -> dict:
         }
 
 
+# ── Exception Detection and Routing ───────────────────────────────────────────
+
+@tool
+@traceable(name="detect_exception_type", run_type="tool")
+def detect_exception_type(
+    message: str,
+    thread_id: str
+) -> dict:
+    """
+    Detect the type of exception from a driver's message.
+    Classifies into: MECHANICAL_FAILURE, DRIVER_SICKNESS, TRAFFIC_CONGESTION, 
+    POLICE_CHECKPOINT, FACILITY_BLOCKED, or GENERIC_DELAY.
+    
+    Returns the detected exception type and what follow-up questions to ask.
+    Use this EARLY in the conversation when the driver reports a problem.
+    
+    Tracks conversation state so repeated calls refine the classification.
+    """
+    detector = get_detector()
+    context = detector.detect_exception_type(message, thread_id)
+    
+    return {
+        "exception_type": context.exception_type.value,
+        "confidence": round(context.confidence, 2),
+        "aspects_collected": context.aspects_collected,
+        "aspects_needed": context.aspects_needed,
+        "follow_up_questions": context.follow_up_questions,
+        "reasoning": context.reasoning,
+        "next_step": f"Ask follow-up questions to collect: {', '.join(context.aspects_needed)}" if context.aspects_needed else "All aspects collected. Ready to resolve."
+    }
+
+
+@tool
+@traceable(name="calculate_eta_with_location", run_type="tool")
+def calculate_eta_with_location(
+    driver_latitude: float,
+    driver_longitude: float,
+    destination_facility_id: str,
+    shipment_id: str = None
+) -> dict:
+    """
+    Calculate ETA from driver's current location to destination warehouse.
+    Uses hardcoded warehouse coordinates and simple distance calculation.
+    
+    Args:
+        driver_latitude: Driver's current latitude
+        driver_longitude: Driver's current longitude
+        destination_facility_id: Target warehouse (FAC-001, FAC-002, etc.)
+        shipment_id: Optional shipment ID to log the decision
+    
+    Returns:
+        ETA info with distance, duration, and calculated arrival time.
+        Saves the calculation to the database.
+    """
+    # Calculate route using routing engine
+    eta_data = RoutingEngine.calculate_eta_for_driver(
+        driver_lat=driver_latitude,
+        driver_lng=driver_longitude,
+        destination_facility_id=destination_facility_id
+    )
+    
+    if "error" in eta_data:
+        return {"success": False, "error": eta_data["error"]}
+    
+    # Save to database if shipment_id provided
+    if shipment_id:
+        save_eta_update_with_location(
+            shipment_id=shipment_id,
+            eta_ts=eta_data["calculated_eta_ts"],
+            confidence="MEDIUM",
+            note=eta_data.get("note", "Calculated from driver location"),
+            driver_lat=driver_latitude,
+            driver_lng=driver_longitude,
+            duration_min=eta_data["duration_min"],
+            distance_km=eta_data["distance_km"]
+        )
+        
+        # Log decision
+        log_decision(
+            decision_type="ETA_RECALCULATION",
+            actor_id=f"SYSTEM-{destination_facility_id}",
+            actor_type="SYSTEM",
+            affected_shipment_id=shipment_id,
+            decision_data=eta_data,
+            reasoning="Driver location shared; ETA recalculated using distance formula"
+        )
+    
+    return {
+        "success": True,
+        "distance_km": eta_data["distance_km"],
+        "duration_min": eta_data["duration_min"],
+        "calculated_eta_ts": eta_data["calculated_eta_ts"],
+        "confidence": eta_data["confidence"],
+        "calculation_method": "HARDCODED",
+        "start_location": eta_data["start_location"],
+        "end_location": eta_data["end_location"],
+        "note": eta_data["note"]
+    }
+
+
+@tool
+@traceable(name="get_test_location_for_driver", run_type="tool")
+def get_test_location_for_driver(location_key: str = None) -> dict:
+    """
+    Get a test driver location for testing without real GPS.
+    Used for demos and testing the ETA calculation flow.
+    
+    If location_key not provided, returns all available test locations.
+    Test locations are hardcoded between warehouses.
+    
+    Returns:
+        Dictionary with location coordinates and metadata.
+    """
+    if location_key:
+        location = RoutingEngine.get_test_location(location_key)
+        if location:
+            return {
+                "success": True,
+                "location_key": location_key,
+                "latitude": location.latitude,
+                "longitude": location.longitude,
+                "name": location.name,
+                "description": f"{location.name} - Use for testing"
+            }
+        else:
+            return {
+                "success": False,
+                "error": f"Test location '{location_key}' not found"
+            }
+    else:
+        # Return all available test locations
+        locations = get_test_locations_list()
+        return {
+            "success": True,
+            "available_locations": locations,
+            "count": len(locations),
+            "instruction": "Use any of these location_key values with get_test_location_for_driver to get coordinates"
+        }
+
+
 # ── Export all tools as a list for the agent ──────────────────────────────────
 # This is what we pass to LangChain when building the agent
 
@@ -572,4 +716,7 @@ ALL_TOOLS = [
     release_hold_tool,
     escalate_to_human,
     get_ops_summary,
+    detect_exception_type,
+    calculate_eta_with_location,
+    get_test_location_for_driver,
 ]
