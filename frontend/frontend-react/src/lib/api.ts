@@ -1,0 +1,1 @@
+export const API_BASE = "https://setuhaul-production.up.railway.app";
