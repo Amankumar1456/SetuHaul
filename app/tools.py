@@ -36,6 +36,13 @@ def lookup_driver_context(driver_id: str) -> dict:
     Call this FIRST when any driver sends a message.
     Returns driver info, active shipments, current appointment, and latest ETA.
     """
+    from app.redis_client import r
+    import json
+
+    cache_key = f"driver_ctx:{driver_id}"
+    cached = r.get(cache_key)
+    if cached:
+        return json.loads(cached)
     # Get driver
     driver = get_driver(driver_id)
     if not driver:
@@ -85,7 +92,7 @@ def lookup_driver_context(driver_id: str) -> dict:
             } if checkin else "Not yet arrived at facility",
         })
 
-    return {
+    result = {
         "driver_name": driver["driver_name"],
         "driver_id": driver_id,
         "carrier": driver["carrier_id"],
@@ -93,6 +100,8 @@ def lookup_driver_context(driver_id: str) -> dict:
         "shipment_count": len(shipment_details),
         "note": "If multiple shipments exist, ask driver which one this is about"
     }
+    r.setex(cache_key, 300, json.dumps(result))
+    return result
 
 
 @tool

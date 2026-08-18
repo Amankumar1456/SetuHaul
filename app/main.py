@@ -7,6 +7,8 @@ from app.agent import run_agent
 from app.redis_client import get_all_active_holds
 from app.database import supabase, get_driver
 import logging
+from fastapi.responses import StreamingResponse
+import json
 
 # ─────────────────────────────────────────────────────────────────────────────
 # App — defined FIRST before anything else uses it
@@ -283,3 +285,27 @@ def ops_chat(request: ChatRequest):
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+
+@app.post("/chat/stream")
+def chat_stream(request: ChatRequest):
+    """Streaming version of chat — sends tokens as they arrive."""
+    from app.database import get_or_create_thread
+
+    def generate():
+        try:
+            thread_id = get_or_create_thread(request.driver_id)
+            response = run_agent(request.driver_id, request.message)
+
+            # Stream word by word for perceived speed
+            words = response.split(" ")
+            for i, word in enumerate(words):
+                chunk = word + (" " if i < len(words)-1 else "")
+                yield f"data: {json.dumps({'token': chunk, 'thread_id': thread_id})}\n\n"
+
+            yield f"data: {json.dumps({'done': True})}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
