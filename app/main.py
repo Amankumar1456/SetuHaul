@@ -8,6 +8,16 @@ from app.database import get_driver
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
+
+from fastapi.middleware.cors import CORSMiddleware
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # tighten to your actual frontend URL before production
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 # ─────────────────────────────────────────────────────────────────────────────
 # FastAPI app
 # This is the web server — it receives messages and returns responses .
@@ -33,6 +43,20 @@ def serve_chat():
 
 # Logger for startup diagnostics (uses uvicorn's error logger)
 logger = logging.getLogger("uvicorn.error")
+
+@app.get("/driver/{driver_id}")
+def get_driver_endpoint(driver_id: str):
+    """Get driver identity — used by the login flow."""
+    try:
+        from app.database import get_driver
+        driver = get_driver(driver_id)
+        if not driver:
+            raise HTTPException(status_code=404, detail="Driver not found")
+        return driver
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.on_event("startup")
