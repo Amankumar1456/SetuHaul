@@ -262,3 +262,24 @@ async def log_registered_routes():
         methods_str = ",".join(sorted(list(methods))) if methods else ""
         routes.append(f"{methods_str} {path}".strip())
     logger.info("Registered routes:\n%s", "\n".join(routes))
+
+
+
+@app.post("/ops/chat")
+def ops_chat(request: ChatRequest):
+    """
+    Ops assistant chat endpoint — used by the dashboard assistant.
+    Uses a system-level driver context instead of a real driver.
+    """
+    try:
+        from app.database import get_or_create_thread
+        # Use a fixed ops thread — not a real driver
+        thread_id = f"OPS-THREAD-{request.driver_id}"
+        response = run_agent("DRV001", request.message)
+        return ChatResponse(
+            driver_id="OPS",
+            response=response,
+            thread_id=thread_id,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
