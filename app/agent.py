@@ -200,8 +200,8 @@ def build_agent():
     llm = get_llm()
     agent = create_react_agent(
         model=llm,
-        tools=ALL_TOOLS,
-        state_modifier=SYSTEM_PROMPT,
+        tools=ALL_TOOLS,# TODO: filter tools based on driver context 
+        state_modifier=SYSTEM_PROMPT, # TODO: consider adding a dynamic system prompt based on driver context
     )
     return agent
 

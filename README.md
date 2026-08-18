@@ -1,8 +1,8 @@
 # SetuHaul — Complete Project Documentation
 **Single Source of Truth for Architecture, Flows, and System Design**
 
-*Last Updated: 2026-08-17*  
-*Project Version: 1.0.0*
+*Last Updated: 2026-08-18*
+*Project Version: 1.1.0*
 
 ---
 
@@ -20,6 +20,7 @@
 10. [Deployment & Configuration](#deployment--configuration)
 11. [Frontend Architecture](#frontend-architecture)
 12. [Key Concepts & Terminology](#key-concepts--terminology)
+13. [Known Issues & Planned Improvements](#known-issues--planned-improvements)
 
 ---
 
@@ -43,7 +44,7 @@
 | No human available at night to handle delay calls | Conversational AI agent runs 24/7, handles ~80% of cases |
 | Manual slot coordination is error-prone | Database + Redis holds ensure race-free concurrent bookings |
 | Ops team has no real-time visibility | Live dashboard shows queue, escalations, holds, active threads |
-| Drivers communicate in Hinglish/casual language | Agent trained to understand informal messages in Hindi/English mix |
+| Drivers communicate in Hinglish/casual language | Agent understands informal messages in Hindi/English mix |
 
 ### Target Users
 
@@ -62,71 +63,49 @@
 ┌─────────────────────────────────────────────────────────────────┐
 │                         CLIENT LAYER                             │
 ├──────────────────────┬──────────────────────┬───────────────────┤
-│  Driver Chat UI      │  Portal Login        │  Ops Dashboard    │
-│  (chat.html)         │  (index.html)        │  (dashboard.html) │
+│  React Frontend      │  HTML Portal         │  Ops Dashboard    │
+│  (Railway Service 2) │  (index.html)        │  (dashboard.html) │
+│  TanStack + Nitro    │  Driver Login        │  HTML + JS        │
 └──────────────────────┴──────────────────────┴───────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
 │                    FASTAPI WEB SERVER                            │
-│                    (app/main.py)                                 │
+│              (Railway Service 1 — Python Backend)                │
 ├──────────────────┬──────────────────┬──────────────────────────┤
 │  Chat Endpoint   │  Auth Endpoints  │  Operations Endpoints    │
 │  POST /chat      │  POST /auth/login│  GET /ops/queue          │
-│  GET /driver/*   │                  │  GET /ops/holds          │
+│  POST /ops/chat  │  GET /driver/*   │  GET /ops/holds          │
 │                  │                  │  GET /ops/escalations    │
 │                  │                  │  GET /ops/threads        │
-│                  │                  │  GET /dashboard          │
+│                  │                  │  GET /ops/slots/{id}     │
 └──────────────────┴──────────────────┴──────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
 │                     AGENT ORCHESTRATION                          │
 │                     (app/agent.py)                               │
 │  ┌────────────────────────────────────────────────────────────┐ │
-│  │ LLM: OpenRouter (Claude/Gemini/GPT-4)                      │ │
-│  │ Framework: LangChain + LangGraph (ReAct Agent)             │ │
-│  │ System Prompt: Detailed rules, priorities, boundaries      │ │
-│  │ Tools: 7 deterministic functions (no AI guessing)          │ │
+│  │ LLM: Groq (llama-3.3-70b-versatile) via LangChain         │ │
+│  │ Framework: LangGraph ReAct Agent                           │ │
+│  │ Tracing: LangSmith                                         │ │
+│  │ Tools: 6 deterministic functions (no AI guessing)          │ │
 │  └────────────────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────────────┘
               ↓                               ↓
     ┌─────────────────────┐      ┌──────────────────────────┐
-    │  PERSISTENT STORAGE │      │  TRANSIENT STATE        │
-    │  (Supabase)         │      │  (Redis)                │
-    ├─────────────────────┤      ├──────────────────────────┤
-    │ • Drivers           │      │ • Slot Holds            │
-    │ • Shipments         │      │ • Conversation Memory   │
-    │ • Facilities        │      │ • Session State         │
-    │ • Appointment Slots │      │ • Rate Limiting         │
-    │ • Appointments      │      └──────────────────────────┘
+    │  PERSISTENT STORAGE │      │  TRANSIENT STATE         │
+    │  Supabase           │      │  Redis (WSL2 / Railway)  │
+    │  (PostgreSQL)       │      ├──────────────────────────┤
+    ├─────────────────────┤      │ • Slot Holds (2 min TTL) │
+    │ • Drivers           │      │ • Conversation Memory    │
+    │ • Shipments         │      │   (1 hour TTL)           │
+    │ • Facilities/Docks  │      └──────────────────────────┘
+    │ • Appointment Slots │
+    │ • Appointments      │
     │ • ETA Updates       │
     │ • Chat Threads      │
     │ • Chat Messages     │
     │ • Escalations       │
     └─────────────────────┘
-```
-
-### Component Interaction Flow
-
-```
-Driver Message
-    ↓
-[Web/Chat UI] ──POST /chat────→ [FastAPI Server]
-    ↑                                 ↓
-    ←─── Response ←────────── [Agent Orchestrator]
-                                    ↙ ↓ ↘
-                    ┌─────────────┴──┴──┴──────────┐
-                    ↓                               ↓
-            [Database Queries]              [Tool Invocations]
-            • Get Driver Info               1. lookup_driver_context
-            • Get Shipments                 2. get_feasible_slots_tool
-            • Check Appointments            3. hold_slot_tool
-            • Verify ETA                    4. confirm_booking_tool
-            • Log Escalations               5. release_hold_tool
-                                            6. escalate_to_human
-                                            7. get_ops_summary
-                    ↓                               ↓
-            [Supabase]                      [Redis] + [Supabase]
-            (Facts)                         (Decisions)
 ```
 
 ---
@@ -136,41 +115,42 @@ Driver Message
 ### Backend
 
 | Layer | Technology | Purpose |
-|-------|-----------|---------|
-| **Web Framework** | FastAPI 0.115.0 | REST API server, request routing |
-| **LLM Provider** | OpenRouter API | Unified interface to Claude, Gemini, GPT-4 |
-| **Agent Framework** | LangChain + LangGraph | ReAct agent orchestration, tool management |
-| **Database** | Supabase (PostgreSQL) | Persistent storage, relational data |
-| **Cache/State** | Redis 5.0.8 | Slot holds, conversation memory, rate limiting |
-| **Server** | Uvicorn 0.30.6 | ASGI application server |
-| **Language** | Python 3.11.9 | All backend code |
+|-------|-----------|---------| 
+| **Web Framework** | FastAPI | REST API server, request routing |
+| **LLM Provider** | Groq API (llama-3.3-70b-versatile) | Fast, free-tier LLM |
+| **Agent Framework** | LangChain 1.x + LangGraph | ReAct agent, tool management |
+| **Observability** | LangSmith | Trace every agent step |
+| **Database** | Supabase (PostgreSQL) | Persistent storage |
+| **Cache/State** | Redis | Slot holds, conversation memory |
+| **Server** | Uvicorn | ASGI application server |
+| **Language** | Python 3.11 | All backend code |
 
 ### Frontend
 
 | Layer | Technology | Purpose |
-|-------|-----------|---------|
-| **Chat Interface** | HTML5 + Vanilla JS | Driver messaging UI |
-| **Login Portal** | HTML5 + Vanilla JS | Driver authentication |
+|-------|-----------|---------| 
+| **React App** | TanStack Start + Nitro | Full-stack React framework |
+| **HTML Portal** | HTML5 + Vanilla JS | Driver login + chat fallback |
 | **Dashboard** | HTML5 + Vanilla JS | Operations visibility |
-| **Styling** | Inline CSS (Dark theme) | SetuHaul brand colors |
+| **Styling** | Tailwind CSS (React) / Inline CSS (HTML) | UI styling |
 
 ### DevOps & Deployment
 
 | Component | Technology | Purpose |
-|-----------|-----------|---------|
-| **Hosting** | Heroku (or similar) | Cloud application hosting |
-| **Process Manager** | Procfile | Application startup configuration |
+|-----------|-----------|---------| 
+| **Backend Hosting** | Railway (Service 1) | Python FastAPI server |
+| **Frontend Hosting** | Railway (Service 2) | React/Nitro app |
 | **Version Control** | Git + GitHub | Code versioning |
-| **Environment Management** | .env file | Configuration secrets |
+| **Environment** | Railway env vars + .env | Configuration secrets |
 
-### Observability & Monitoring
+### Observability
 
 | Tool | Purpose |
-|------|---------|
-| **LangSmith** | Trace every agent step, see reasoning, debug decisions |
+|------|---------| 
+| **LangSmith** | Trace every agent step, see reasoning, debug tool calls |
 | **Uvicorn Logging** | Server-side request/response logging |
-| **Supabase Dashboard** | Monitor database performance, queries |
-| **Redis CLI** | Inspect active holds and conversation state |
+| **Supabase Dashboard** | Monitor database, run SQL queries |
+| **FastAPI /docs** | Interactive API testing (Swagger UI) |
 
 ---
 
@@ -178,1439 +158,379 @@ Driver Message
 
 ### 1. Web Server (`app/main.py`)
 
-**Purpose**: HTTP request handling, route dispatch, response formatting
+**Key endpoints**:
+- `POST /chat` — Driver chat with agent
+- `POST /ops/chat` — Ops assistant chat (dashboard)
+- `POST /auth/login` — Driver authentication
+- `GET /driver/{driver_id}` — Driver lookup
+- `GET /driver/shipments/{driver_id}` — Active shipments
+- `GET /ops/queue` — All active shipments
+- `GET /ops/holds` — Active Redis holds
+- `GET /ops/slots/{facility_id}` — Dock schedule
+- `GET /ops/escalations` — Open escalations
+- `GET /ops/threads` — Active chat threads
+- `GET /ops/verify/{shipment_id}` — Ground truth booking check
 
-**Key Responsibilities**:
-- Receive driver chat messages
-- Route to agent for processing
-- Return agent response to client
-- Serve frontend files (HTML)
-- Expose operations API endpoints
-- Manage driver authentication
-
-**Startup Behavior**:
-- Logs all registered routes for debugging
-- Verifies critical endpoints are available
-- Confirms Supabase connectivity
+**Important**: `app = FastAPI()` must be defined BEFORE `app.add_middleware()` — ordering matters.
 
 ### 2. Agent Orchestrator (`app/agent.py`)
 
-**Purpose**: Conversational AI engine for exception handling
-
-**Key Components**:
-- **System Prompt** — Detailed behavioral rules (80+ lines)
-  - Defines agent's responsibilities
-  - Specifies when to escalate vs. resolve
-  - Sets language/tone expectations
-  - Mandates fact-checking from database
-  
-- **LLM Configuration**
-  - Model: OpenRouter (configurable)
-  - Temperature: 0 (deterministic)
-  - Max Tokens: 1000 (brief responses)
-  - Timeout: 30 seconds
-
-- **Message History Management**
-  - Loads conversation history from Redis
-  - Converts to LangChain message objects
-  - Maintains context across turns
-  - Expires after 1 hour of inactivity
-
-- **Execution Engine**
-  - Uses LangGraph ReAct pattern
-  - Agent thinks → picks tool → observes → thinks again
-  - Maximum iterations: agent-defined
-  - Tool calls are deterministic (no LLM guessing inside tools)
+- Uses `create_react_agent` from LangGraph
+- Loads conversation history from Redis on each turn
+- Saves updated history back to Redis after response
+- Also persists messages to Supabase permanently
+- `verbose=True` prints every agent step to server logs
 
 ### 3. Tools Module (`app/tools.py`)
 
-**Purpose**: Agent's interface to the real world
+6 tools available to the agent — all deterministic, no LLM guessing inside:
 
-**7 Available Tools**:
-
-| # | Tool | Purpose | Parameters | Returns |
-|---|------|---------|-----------|---------|
-| 1 | `lookup_driver_context` | Get driver & shipment facts | `driver_id` | Driver, shipments, ETA, status |
-| 2 | `get_feasible_slots_tool` | Find available slots | `shipment_id`, `facility_id`, `after_eta_ts`, `dock_type` | List of 5 slots (time, dock, type) |
-| 3 | `hold_slot_tool` | Reserve slot (2 min hold) | `slot_id`, `shipment_id`, `driver_id` | Success/failure, expiry time |
-| 4 | `confirm_booking_tool` | Finalize appointment | `slot_id`, `shipment_id`, `driver_id`, `revised_eta_ts`, `eta_confidence`, `eta_note` | Appointment ID, status |
-| 5 | `release_hold_tool` | Cancel hold | `slot_id`, `shipment_id` | Success/failure |
-| 6 | `escalate_to_human` | Route to human | `shipment_id`, `driver_id`, `thread_id`, `reason`, `urgency` | Escalation ID, ticket reference |
-| 7 | `get_ops_summary` | Get facility status | None (queries all /ops/* endpoints) | Queue counts, holds, escalations, threads |
+| Tool | Purpose |
+|------|---------|
+| `lookup_driver_context` | Get driver + shipment + appointment facts |
+| `get_feasible_slots_tool` | Find available slots after ETA (IST formatted) |
+| `hold_slot_tool` | 2-minute Redis soft lock on a slot |
+| `confirm_booking_tool` | Book appointment + save ETA update |
+| `release_hold_tool` | Release Redis hold |
+| `escalate_to_human` | Create escalation in DB + ops dashboard |
 
 ### 4. Database Layer (`app/database.py`)
 
-**Purpose**: Supabase PostgreSQL persistence and queries
-
-**Responsibilities**:
-- Fetch/verify driver data
-- Query shipments and appointments
-- Record ETA updates
-- Save escalations
-- Book appointments
-- Manage chat threads
-- All operations use Supabase RLS (Row-Level Security)
+Supabase PostgreSQL queries. Key functions:
+- `get_driver()`, `get_driver_shipments()`
+- `get_shipment()`, `get_current_appointment()`
+- `get_latest_eta()`, `get_facility_checkin()`
+- `get_feasible_slots()` — excludes already-booked slots
+- `book_appointment()` — marks old as not-current, creates new
+- `save_eta_update()`, `save_chat_message()`
+- `get_or_create_thread()`, `save_escalation()`
 
 ### 5. Redis Client (`app/redis_client.py`)
 
-**Purpose**: Transient state management and concurrency control
+**Slot Holds** (key: `hold:{slot_id}`):
+- `place_hold()` — atomic SET NX EX 120
+- `get_hold()`, `release_hold()`
+- `is_slot_held_by_other()` — used by slot search
+- `get_all_active_holds()` — for ops dashboard
 
-**Two Key Features**:
-
-**a) Slot Holds**
-- Soft locks that prevent race conditions
-- Atomic SET with NX (exists check) + EX (expiry)
-- 2-minute expiry (120 seconds)
-- Only one driver can hold a slot at a time
-- Release on booking or cancellation
-
-**b) Conversation Memory**
-- Stores full message history per thread
-- 1-hour expiry (3600 seconds)
-- Loaded on each agent turn
-- Enables context retention
-- Cleared when thread closes
-
-**Race Condition Prevention**:
-```
-Scenario: Two drivers pick the same slot simultaneously
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Driver A: hold_slot(SLOT-123)        Driver B: hold_slot(SLOT-123)
-          ↓                                        ↓
-  Redis SET NX → SUCCESS              Redis SET NX → FAIL
-  (lock acquired)                     (already held by A)
-          ↓                                        ↓
-  Query DB for appointment            Return to driver B:
-  (no record yet)                     "Slot being processed"
-          ↓                                        ↓
-  Book appointment                    Offer different slot
-  Release hold from Redis
-```
+**Conversation Memory** (key: `conversation:{thread_id}`):
+- `save_conversation()`, `get_conversation()`
+- `clear_conversation()` — on thread close
+- 1-hour TTL
 
 ---
 
 ## Database Schema
 
-### Table Structure Overview
+### Core Tables
 
 #### **drivers**
 ```
-driver_id        (PK) — e.g. "DRV006"
-driver_name      — Full name
-phone            — Verification number
-carrier_id       — Logistics company
-driver_status    — ACTIVE | INACTIVE
-created_at       — Registration timestamp
+driver_id (PK), driver_name, phone, carrier_id,
+licence_number, home_base_city, driver_status
 ```
 
 #### **shipments**
 ```
-shipment_id      (PK) — e.g. "SHP1006"
-driver_id        (FK) → drivers
-current_status   — IN_TRANSIT | WAITING | IN_DOCK | ASSIGNED | DELIVERED
-priority_code    — CRITICAL | HIGH | NORMAL | LOW
-cargo_desc       — Item description
-required_dock_type — STANDARD | REEFER | HEAVY
-destination_facility_id (FK) → facilities
-expected_unload_min — Minutes required at dock
-created_at, updated_at
+shipment_id (PK), driver_id (FK), vehicle_id (FK),
+destination_facility_id (FK), priority_code,
+current_status, required_dock_type,
+expected_unload_min, cargo_desc, original_eta_ts
 ```
 
 #### **appointment_slots**
 ```
-slot_id          (PK) — e.g. "SLT-JAI-D1-001"
-facility_id      (FK) → facilities
-dock_id          — Physical dock identifier
-dock_type        — STANDARD | REEFER | HEAVY
-slot_start_ts    — ISO timestamp (5:30 AM IST format)
-slot_end_ts      — ISO timestamp
-slot_status      — OPEN | BLOCKED | MAINTENANCE
-capacity_units   — Max weight/items
-created_at
+slot_id (PK), facility_id (FK), dock_id (FK),
+dock_type, slot_start_ts, slot_end_ts,
+slot_status, block_reason
 ```
 
 #### **appointments**
 ```
-appointment_id   (PK) — e.g. "APT-XXXXXXXX"
-shipment_id      (FK) → shipments
-slot_id          (FK) → appointment_slots
-appointment_status — CONFIRMED | PENDING_CONFIRMATION | IN_PROGRESS | CANCELLED
-booking_source   — DRIVER_CHAT | MANUAL | API
-is_current       — 1 (active) | 0 (archived)
-booked_at        — When this appointment was created
-booking_confirmed_at — When warehouse confirmed
-cancelled_at, cancellation_reason
+appointment_id (PK), shipment_id (FK), slot_id (FK),
+appointment_status, booking_source, is_current,
+booked_at, confirmed_at, cancelled_at,
+cancellation_reason
 ```
 
 #### **eta_updates**
 ```
-eta_update_id    (PK) — e.g. "ETA-XXXXXXXX"
-shipment_id      (FK) → shipments
-source_type      — DRIVER_DECLARED | GPS_TRACKING | SYSTEM_CALC
-declared_eta_ts  — New ETA timestamp (ISO format, IST)
-confidence_code  — HIGH | MEDIUM | LOW
-note             — Driver's message explaining delay
-created_at       — When update was recorded
+eta_update_id (PK), shipment_id (FK),
+source_type, declared_eta_ts, confidence_code,
+note, created_at
+```
+
+#### **driver_exceptions** (escalations)
+```
+exception_id (PK), shipment_id (FK), driver_id (FK),
+thread_id (FK), exception_type, reported_at,
+exception_status, notes, dedupe_key
 ```
 
 #### **chat_threads**
 ```
-thread_id        (PK) — e.g. "THR-XXXXXXXX"
-driver_id        (FK) → drivers
-shipment_id      (nullable FK) — may be determined mid-conversation
-opened_at        — Conversation start
-thread_status    — OPEN | CLOSED
-thread_intent    — DELAY | URGENT | INFO | UNKNOWN
-last_message_at  — Timestamp of most recent message
+thread_id (PK), driver_id (FK), shipment_id (FK),
+opened_at, closed_at, thread_status, thread_intent
 ```
 
 #### **chat_messages**
 ```
-message_id       (PK) — e.g. "MSG-XXXXXXXX"
-thread_id        (FK) → chat_threads
-sender_type      — DRIVER | AGENT
-message_text     — Full text content
-created_at       — Message timestamp
-```
-
-#### **driver_exceptions**
-```
-exception_id     (PK) — e.g. "EXC-XXXXXXXX"
-shipment_id      (FK) → shipments
-driver_id        (FK) → drivers
-thread_id        (FK) → chat_threads
-exception_type   — ESCALATED | SAFETY_CONCERN | HAZMAT | CONTRADICTION
-reported_at      — When escalation triggered
-exception_status — OPEN | RESOLVED | DISMISSED
-urgency          — CRITICAL | HIGH | MEDIUM | LOW
-notes            — Reason and context
-dedupe_key       — Prevents duplicate escalations
-```
-
-#### **facility_checkins**
-```
-checkin_id       (PK)
-shipment_id      (FK) → shipments
-gate_in_at       — When truck arrived at facility gate
-queue_status     — NOT_ARRIVED | QUEUED | AT_DOCK | UNLOADING | COMPLETE
-updated_at
+message_id (PK), thread_id (FK),
+sender_type (DRIVER|AGENT|OPS|WAREHOUSE),
+message_text, created_at
 ```
 
 #### **facilities**
 ```
-facility_id      (PK) — e.g. "FAC-JAI-01"
-facility_name    — "Jaipur Hub"
-location         — City/address
-manager_id       — Contact person
-created_at
+facility_id (PK), facility_name, city, state,
+open_time, close_time, no_show_grace_min, last_start_min
+```
+
+#### **docks**
+```
+dock_id (PK), facility_id (FK), dock_code,
+dock_type (STANDARD|REEFER|HEAVY),
+refrigerated, max_weight_kg, dock_status
 ```
 
 ---
 
 ## API Endpoints
 
-### Chat & Messaging Endpoints
+### Chat
 
 #### **POST /chat**
-Send a driver message, receive agent response
-
-**Request**:
 ```json
-{
-  "driver_id": "DRV006",
-  "message": "I'm stuck in traffic, 90 minutes late for my appointment"
-}
+Request:  { "driver_id": "DRV006", "message": "90 min late" }
+Response: { "driver_id": "DRV006", "response": "...", "thread_id": "THR-..." }
 ```
 
-**Response**:
-```json
-{
-  "driver_id": "DRV006",
-  "response": "Hi Manoj, I see your shipment SHP1006 at Jaipur Hub. Let me find you a new slot...",
-  "thread_id": "THR-XXXXXXXX"
-}
-```
+#### **POST /ops/chat**
+Same shape — used by dashboard ops assistant. Internally uses a system driver context.
 
-**Flow**:
-1. Create/retrieve chat thread
-2. Load conversation history from Redis
-3. Invoke agent with all messages
-4. Agent uses tools to check facts and make decisions
-5. Save new messages to database and Redis
-6. Return response to client
-
----
-
-#### **GET /driver/shipments/{driver_id}**
-Get all active shipments for a driver (shown in chat UI banner)
-
-**Response**:
-```json
-{
-  "shipments": [
-    {
-      "shipment_id": "SHP1006",
-      "cargo_desc": "Electronics",
-      "current_status": "IN_TRANSIT",
-      "destination": "Jaipur Hub",
-      "priority_code": "HIGH"
-    }
-  ],
-  "count": 1
-}
-```
-
----
-
-### Authentication Endpoints
+### Auth
 
 #### **POST /auth/login**
-Verify driver identity for portal access
-
-**Request**:
 ```json
-{
-  "driver_id": "DRV006",
-  "phone": "9876543210"
-}
+Request:  { "driver_id": "DRV006", "phone": "+91-9000010006" }
+Response: { "success": true, "driver_name": "Manoj Sharma", "driver_id": "DRV006", "carrier_id": "CAR003" }
 ```
 
-**Response (Success)**:
-```json
-{
-  "success": true,
-  "driver_id": "DRV006",
-  "driver_name": "Manoj Kumar",
-  "carrier_id": "CARR-001",
-  "message": "Login successful"
-}
-```
+### Driver
 
-**Validation Rules**:
-- driver_id must exist in database
-- phone must match database record
-- driver_status must be ACTIVE
-- Returns 403 if any check fails
+#### **GET /driver/{driver_id}**
+Returns full driver record.
 
----
+#### **GET /driver/shipments/{driver_id}**
+Returns active shipments (IN_TRANSIT, WAITING, ASSIGNED).
 
-### Operations Dashboard Endpoints
+### Ops Dashboard
 
-#### **GET /ops/queue**
-Real-time shipment status (for dashboard widget)
+| Endpoint | Returns |
+|----------|---------|
+| `GET /ops/queue` | Active shipments (IN_TRANSIT, WAITING, IN_DOCK) |
+| `GET /ops/holds` | Active Redis slot holds |
+| `GET /ops/slots/{facility_id}` | All slots with appointment status |
+| `GET /ops/escalations` | Open escalations |
+| `GET /ops/threads` | Open chat threads (last 50) |
+| `GET /ops/verify/{shipment_id}` | Ground truth booking check |
 
-**Response**:
-```json
-{
-  "shipments": [
-    {
-      "shipment_id": "SHP1006",
-      "driver_id": "DRV006",
-      "current_status": "IN_TRANSIT",
-      "priority_code": "HIGH",
-      "required_dock_type": "STANDARD",
-      "cargo_desc": "Electronics",
-      "destination_facility_id": "FAC-JAI-01"
-    }
-  ],
-  "count": 1
-}
-```
+### Frontend Pages (HTML)
 
-**Data Included**: IN_TRANSIT, WAITING, IN_DOCK, ASSIGNED shipments
-
----
-
-#### **GET /ops/holds**
-Show all active slot holds (negotiations in progress)
-
-**Response**:
-```json
-{
-  "active_holds": [
-    {
-      "slot_id": "SLT-JAI-D1-001",
-      "shipment_id": "SHP1006",
-      "driver_id": "DRV006",
-      "hold_ts": "2026-08-17T10:30:00+05:30",
-      "expires_at": "2026-08-17T10:32:00+05:30"
-    }
-  ],
-  "count": 1
-}
-```
-
-**Note**: Data from Redis (not persistent after 2 min expiry)
-
----
-
-#### **GET /ops/escalations**
-Open escalations requiring human attention
-
-**Response**:
-```json
-{
-  "escalations": [
-    {
-      "escalation_id": "EXC-XXXXXXXX",
-      "shipment_id": "SHP1006",
-      "driver_id": "DRV006",
-      "reason": "No feasible slots after revised ETA",
-      "urgency": "HIGH",
-      "reported_at": "2026-08-17T10:25:00+05:30",
-      "exception_status": "OPEN"
-    }
-  ],
-  "count": 1
-}
-```
-
----
-
-#### **GET /ops/threads**
-Active chat conversations (last 50)
-
-**Response**:
-```json
-{
-  "threads": [
-    {
-      "thread_id": "THR-XXXXXXXX",
-      "driver_id": "DRV006",
-      "shipment_id": "SHP1006",
-      "thread_status": "OPEN",
-      "thread_intent": "DELAY",
-      "opened_at": "2026-08-17T10:20:00+05:30"
-    }
-  ],
-  "count": 1
-}
-```
-
----
-
-#### **GET /ops/slots/{facility_id}**
-All slots for a facility with current status
-
-**Response**:
-```json
-{
-  "slots": [
-    {
-      "slot_id": "SLT-JAI-D1-001",
-      "facility_id": "FAC-JAI-01",
-      "dock_id": "DOCK-JAI-D1",
-      "dock_type": "STANDARD",
-      "slot_start_ts": "2026-08-17T14:00:00+05:30",
-      "slot_end_ts": "2026-08-17T15:30:00+05:30",
-      "slot_status": "OPEN",
-      "appointments": []
-    }
-  ],
-  "count": 6
-}
-```
-
----
-
-#### **GET /ops/verify/{shipment_id}**
-Verification endpoint: check what's actually booked (agent debugging tool)
-
-**Response**:
-```json
-{
-  "shipment_id": "SHP1006",
-  "database_appointment": {
-    "appointment_id": "APT-XXXXXXXX",
-    "appointment_status": "PENDING_CONFIRMATION",
-    "slot_start": "2026-08-17T14:00:00+05:30"
-  },
-  "latest_eta_saved": {
-    "declared_eta_ts": "2026-08-17T13:45:00+05:30",
-    "confidence_code": "HIGH",
-    "note": "90 minutes late due to traffic"
-  },
-  "active_redis_holds": [],
-  "verdict": "BOOKED"
-}
-```
-
-**Use Case**: Ops coordinator wants to verify agent's booking was recorded correctly
-
----
-
-### Frontend Endpoints
-
-#### **GET /portal**
-Driver login page (index.html)
-
-#### **GET /portal/chat**
-Driver chat interface (chat.html)
-
-#### **GET /dashboard**
-Operations dashboard (dashboard.html)
-
-#### **GET /static/{path}**
-Serve frontend assets (CSS, images, etc.)
+| URL | Page |
+|-----|------|
+| `/portal` | Driver login |
+| `/portal/chat` | Driver chat |
+| `/dashboard` | Ops dashboard |
 
 ---
 
 ## Agent Tools & Capabilities
 
-### Tool Architecture
+### Tool Execution Flow
 
 ```
-Agent asks: "Should I book this slot?"
-       ↓
-Agent picks tool: confirm_booking_tool(...)
-       ↓
-Tool (deterministic function) executes
-       ↓
-Tool returns structured result
-       ↓
-Agent observes result, reasons about next step
-       ↓
-Agent picks next tool or formulates response
+Driver message → Agent reasons → picks tool → tool queries DB/Redis
+→ returns facts → agent reasons again → picks next tool or responds
 ```
 
-**Key Principle**: Tools are **deterministic**, never guessing. They check facts from database/Redis and return what actually exists.
+**Key principle**: Tools are deterministic. The LLM decides WHEN to call them, but the tools themselves never guess — they query real data.
 
----
+### Slot Lifecycle
 
-### Tool Details
-
-#### **1. lookup_driver_context**
-
-**Purpose**: Get everything about a driver and their shipment(s)
-
-**When Called**: 
-- First call when any driver sends message
-- Before showing any slot options
-
-**Parameters**:
-- `driver_id` (string) — e.g. "DRV006"
-
-**Returns**:
-```python
-{
-  "driver_name": "Manoj Kumar",
-  "driver_id": "DRV006",
-  "carrier": "CARR-001",
-  "active_shipments": [
-    {
-      "shipment_id": "SHP1006",
-      "cargo": "Electronics",
-      "priority": "HIGH",
-      "status": "IN_TRANSIT",
-      "destination": "Jaipur Hub",
-      "facility_id": "FAC-JAI-01",
-      "required_dock_type": "STANDARD",
-      "current_appointment": {
-        "appointment_id": "APT-XXXXXXXX",
-        "status": "CONFIRMED",
-        "slot_start": "2026-08-17T12:00:00+05:30"
-      },
-      "latest_eta": {
-        "timestamp": "2026-08-17T13:45:00+05:30",
-        "confidence": "HIGH",
-        "note": "90 minutes late due to traffic"
-      },
-      "facility_checkin": {
-        "gate_in_at": null,
-        "queue_status": "NOT_ARRIVED"
-      }
-    }
-  ],
-  "shipment_count": 1
-}
+```
+OPEN → HELD (Redis, 2 min) → PENDING_CONFIRMATION (DB) → CONFIRMED
+                ↘ RELEASED (driver changed mind or timeout)
 ```
 
-**Agent Logic After Calling**:
-- If multiple shipments: ask driver which one
-- If no appointment: option to book new slot
-- If delayed: extract new ETA from latest_eta
-- If at facility: different logic than in-transit
+### Race Condition Prevention
 
----
-
-#### **2. get_feasible_slots_tool**
-
-**Purpose**: Find available dock slots matching shipment requirements
-
-**When Called**:
-- After confirming shipment ID and revised ETA
-- When driver agrees to look for slots
-
-**Parameters**:
-- `shipment_id` — e.g. "SHP1006"
-- `facility_id` — e.g. "FAC-JAI-01"
-- `after_eta_ts` — ISO format, e.g. "2026-08-17T13:45:00+05:30"
-- `dock_type` — One of: STANDARD, REEFER, HEAVY
-
-**Returns**:
-```python
-{
-  "available": True,
-  "slots": [
-    {
-      "slot_id": "SLT-JAI-D1-003",
-      "dock_id": "DOCK-JAI-D1",
-      "start_time": "17 Aug 2026 02:00 PM IST",
-      "end_time": "17 Aug 2026 03:30 PM IST",
-      "dock_type": "STANDARD",
-      "status": "AVAILABLE"
-    },
-    {
-      "slot_id": "SLT-JAI-D1-004",
-      "dock_id": "DOCK-JAI-D1",
-      "start_time": "17 Aug 2026 03:30 PM IST",
-      "end_time": "17 Aug 2026 05:00 PM IST",
-      "dock_type": "STANDARD",
-      "status": "AVAILABLE"
-    }
-  ],
-  "count": 2,
-  "note": "Show these options to driver"
-}
 ```
-
-**Filters Applied**:
-- Only OPEN slots
-- Matching dock_type
-- After the driver's revised ETA
-- Excluding already-booked slots
-- Excluding slots held by other drivers
-- Max 5 returned, sorted by time
-
----
-
-#### **3. hold_slot_tool**
-
-**Purpose**: Reserve a slot for 2 minutes while driver decides
-
-**When Called**:
-- Before showing slot details to driver
-- After driver picks a specific slot option
-
-**Parameters**:
-- `slot_id` — e.g. "SLT-JAI-D1-003"
-- `shipment_id` — e.g. "SHP1006"
-- `driver_id` — e.g. "DRV006"
-
-**Returns (Success)**:
-```python
-{
-  "success": True,
-  "slot_id": "SLT-JAI-D1-003",
-  "expires_in_seconds": 120,
-  "message": "Slot held for 2 minutes. Please confirm quickly."
-}
+Driver A: hold_slot(SLOT-X) → Redis SET NX → SUCCESS → holds slot
+Driver B: hold_slot(SLOT-X) → Redis SET NX → FAIL → offered alternative
 ```
-
-**Returns (Failure — slot already held)**:
-```python
-{
-  "success": False,
-  "reason": "Slot is being processed by another request. Please choose a different slot."
-}
-```
-
-**Implementation** (Redis):
-- Uses `SET key value NX EX 120` (atomic)
-- If key exists, returns failure immediately
-- No race condition possible
-- Hold expires automatically after 2 min
-- Same shipment can refresh hold
-
----
-
-#### **4. confirm_booking_tool**
-
-**Purpose**: Finalize slot booking (creates PENDING_CONFIRMATION appointment)
-
-**When Called**:
-- After driver explicitly says "YES, book this slot"
-- After hold is still active
-
-**Parameters**:
-- `slot_id` — e.g. "SLT-JAI-D1-003"
-- `shipment_id` — e.g. "SHP1006"
-- `driver_id` — e.g. "DRV006"
-- `revised_eta_ts` — ISO timestamp of new ETA
-- `eta_confidence` — One of: HIGH, MEDIUM, LOW
-- `eta_note` — Brief reason (e.g. "Traffic on NH-8")
-
-**Actions**:
-1. Save ETA update to database
-2. Mark old appointment as not-current
-3. Create new appointment with status PENDING_CONFIRMATION
-4. Release Redis hold
-5. Return appointment ID
-
-**Returns**:
-```python
-{
-  "success": True,
-  "appointment_id": "APT-XXXXXXXX",
-  "status": "PENDING_CONFIRMATION",
-  "message": "Appointment created. Awaiting warehouse confirmation.",
-  "note": "Tell driver slot is booked but pending facility sign-off"
-}
-```
-
----
-
-#### **5. release_hold_tool**
-
-**Purpose**: Cancel a slot hold (driver changed mind or picked different slot)
-
-**When Called**:
-- Driver rejects a slot
-- Driver picks a different slot
-- Conversation ends without booking
-- Hold expires
-
-**Parameters**:
-- `slot_id` — e.g. "SLT-JAI-D1-003"
-- `shipment_id` — e.g. "SHP1006"
-
-**Returns**:
-```python
-{
-  "success": True,
-  "message": "Hold released"
-}
-```
-
----
-
-#### **6. escalate_to_human**
-
-**Purpose**: Route exception to human operations coordinator
-
-**When Called**:
-- No feasible slot exists after revised ETA
-- Driver reports safety concern
-- Contradictory information received
-- Regulated/hazmat load
-- Driver explicitly asks for human help
-- Agent not confident in resolution
-
-**Parameters**:
-- `shipment_id` — e.g. "SHP1006"
-- `driver_id` — e.g. "DRV006"
-- `thread_id` — e.g. "THR-XXXXXXXX"
-- `reason` — Explanation (e.g. "No slots available within 3 hours")
-- `urgency` — One of: LOW, MEDIUM, HIGH, CRITICAL
-
-**Returns**:
-```python
-{
-  "success": True,
-  "escalation_id": "EXC-XXXXXXXX",
-  "urgency": "HIGH",
-  "message": "Escalated to human ops team. Reference: EXC-XXXXXXXX. A coordinator will contact you shortly."
-}
-```
-
-**Backend Action**:
-- Saves to driver_exceptions table
-- Triggers email to operations team
-- Shows escalation ID on ops dashboard
-- Marks thread for manual follow-up
-
----
-
-#### **7. get_ops_summary**
-
-**Purpose**: Answer operational questions (for ops staff via admin chat)
-
-**When Called**:
-- Someone (from ops dashboard) asks "How many escalations?"
-- Questions like "Current facility load?"
-
-**Parameters**: None
-
-**Returns**:
-```python
-{
-  "success": True,
-  "timestamp": "2026-08-17T10:30:00+05:30",
-  "queue": {
-    "in_transit_count": 12,
-    "waiting_count": 3,
-    "in_dock_count": 2,
-    "total_shipments": 17
-  },
-  "holds": {
-    "active_holds_count": 1,
-    "active_holds": [
-      {
-        "slot_id": "SLT-JAI-D1-003",
-        "shipment_id": "SHP1006",
-        "held_by_driver": "DRV006",
-        "held_since": "2026-08-17T10:28:00+05:30",
-        "expires_at": "2026-08-17T10:30:00+05:30"
-      }
-    ]
-  },
-  "escalations": {
-    "open_escalations_count": 2,
-    "open_escalations": [...]
-  },
-  "threads": {
-    "open_threads_count": 5,
-    "total_threads": 23,
-    "open_threads": [...]
-  }
-}
-```
-
-**Implementation**:
-- Calls all `/ops/*` endpoints via HTTP
-- Aggregates results
-- Uses `API_BASE_URL` from environment (production-ready)
-- Graceful error handling if API unavailable
 
 ---
 
 ## Data Flows
 
-### Flow 1: Driver Sends Delay Message
+### Flow 1: Standard Delay Resolution
 
 ```
-ACTOR: Driver (in traffic, going to be late)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-1. Driver types message
-   ├─ "I'm stuck in traffic, 2 hours late"
-   └─ Sends to chat interface
-
-2. Chat UI → POST /chat
-   ├─ Payload: {driver_id: "DRV006", message: "..."}
-   └─ Browser sends to fastapi.setuhaul.com/chat
-
-3. FastAPI Server (main.py)
-   ├─ Receives POST /chat
-   ├─ Calls get_or_create_thread(driver_id)
-   ├─ Invokes run_agent(driver_id, message)
-   └─ Returns ChatResponse to client
-
-4. Agent Orchestrator (agent.py)
-   ├─ Gets conversation history from Redis
-   ├─ Builds LangChain message list
-   ├─ Calls LLM via OpenRouter
-   ├─ LLM returns tool choice
-   └─ Loops through tool invocations
-
-5. Agent Tool 1: lookup_driver_context
-   ├─ Queries Supabase: drivers.select(*) where driver_id="DRV006"
-   ├─ Queries Supabase: shipments where driver_id="DRV006"
-   ├─ Gets current appointment and latest ETA
-   └─ Returns driver facts to agent
-
-6. Agent Reasoning
-   ├─ Sees driver has shipment SHP1006 at Jaipur Hub
-   ├─ Current appointment: 12:00 PM (now 2:00 PM — MISSED)
-   ├─ Driver claims 2 hour delay
-   ├─ Agent calculates new ETA: 2:00 PM + 2 hours = 4:00 PM
-   └─ Decision: Find slots after 4:00 PM
-
-7. Agent Tool 2: get_feasible_slots_tool
-   ├─ Params: facility_id="FAC-JAI-01", dock_type="STANDARD", after_eta="2026-08-17T16:00:00+05:30"
-   ├─ Queries DB: slots where facility_id=... AND dock_type=... AND slot_start_ts >= ...
-   ├─ Filters out already-booked slots
-   ├─ Filters out slots held by other drivers (from Redis)
-   └─ Returns 2-3 available slots
-
-8. Agent Tool 3: hold_slot_tool
-   ├─ Picks first slot: SLT-JAI-D1-003 (4:00 PM - 5:30 PM)
-   ├─ Calls hold_slot_tool(slot_id, shipment_id, driver_id)
-   ├─ Redis SET key=hold:SLT-JAI-D1-003 value={...} NX EX 120
-   ├─ Returns success
-   └─ Slot now reserved for this driver for 2 minutes
-
-9. Agent Response Generation
-   ├─ Composes message: "Manoj, I found a slot at 4:00 PM (Dock 1). Does this work?"
-   ├─ Includes slot details, confirms hold expires in 2 min
-   └─ Ready for return
-
-10. Response Saved to Storage
-    ├─ Save to Redis: conversation:{thread_id} = [all messages + new response]
-    ├─ Save to Supabase: chat_messages with sender_type="AGENT"
-    └─ Conversation expires after 1 hour
-
-11. Response Returned to Client
-    ├─ ChatResponse: {driver_id, response, thread_id}
-    └─ UI displays: "Hi Manoj, I found a slot..."
-
-12. Driver sees options and responds
-    └─ NEXT LOOP: Driver says "Yes, book that slot"
+1. Driver: "90 min late"
+2. POST /chat → FastAPI → run_agent()
+3. Agent: lookup_driver_context(DRV006)
+   → Supabase: finds SHP1006, appointment at 10:00 AM, ETA 11:30 AM
+4. Agent: get_feasible_slots_tool(FAC-JAI-01, STANDARD, after 11:30 AM)
+   → Supabase: finds SLOT-JAI-D1-004 (12:00–13:00)
+   → Redis: confirms no hold on this slot
+5. Agent: hold_slot_tool(SLOT-JAI-D1-004, SHP1006, DRV006)
+   → Redis SET NX EX 120 → SUCCESS
+6. Agent responds: "I have a slot at 12:00 PM, Dock D1. Confirm?"
+7. Driver: "Haan, book karo"
+8. Agent: confirm_booking_tool(...)
+   → Supabase: save ETA update, create appointment PENDING_CONFIRMATION
+   → Redis: release hold
+9. Agent responds: "Slot booked. Awaiting warehouse confirmation."
 ```
 
----
-
-### Flow 2: Driver Confirms Booking
+### Flow 2: Escalation (No Slots)
 
 ```
-ACTOR: Driver (accepting the new slot)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-1. Driver responds: "Yes, confirm that 4 PM slot"
-
-2. Chat UI → POST /chat
-   └─ Same as before
-
-3. Agent loads conversation from Redis
-   ├─ Sees previous exchange
-   ├─ Knows which slot was shown (SLT-JAI-D1-003)
-   ├─ Knows hold is still active (< 2 min)
-   └─ Interprets "Yes" as confirmation
-
-4. Agent Tool 4: confirm_booking_tool
-   ├─ Calls with:
-   │  ├─ slot_id = "SLT-JAI-D1-003"
-   │  ├─ shipment_id = "SHP1006"
-   │  ├─ driver_id = "DRV006"
-   │  ├─ revised_eta_ts = "2026-08-17T16:00:00+05:30"
-   │  ├─ eta_confidence = "HIGH"
-   │  └─ eta_note = "Driver reported traffic, 2 hour delay"
-   └─ Tool execution:
-
-5. Inside confirm_booking_tool
-   ├─ Save ETA update to database
-   │  └─ INSERT into eta_updates (eta_update_id, shipment_id, declared_eta_ts, ...)
-   │
-   ├─ Mark old appointment as not-current
-   │  └─ UPDATE appointments SET is_current=0 WHERE shipment_id="SHP1006" AND is_current=1
-   │
-   ├─ Create new appointment
-   │  └─ INSERT into appointments (
-   │      appointment_id="APT-XXXXXXXX",
-   │      shipment_id="SHP1006",
-   │      slot_id="SLT-JAI-D1-003",
-   │      appointment_status="PENDING_CONFIRMATION",
-   │      booking_source="DRIVER_CHAT",
-   │      is_current=1,
-   │      booked_at=now
-   │     )
-   │
-   ├─ Release Redis hold
-   │  └─ DEL hold:SLT-JAI-D1-003
-   │
-   └─ Return: success=True, appointment_id="APT-XXXXXXXX"
-
-6. Agent Response
-   ├─ Composes message: "Done! Your new slot is booked for 4:00 PM at Dock 1. Warehouse will confirm shortly."
-   └─ Informs driver: status is PENDING_CONFIRMATION (not final yet)
-
-7. Storage Update
-   ├─ Save response to Redis and Supabase
-   └─ Conversation continues
-
-8. Ops Notification
-   ├─ Dashboard shows: APT-XXXXXXXX status=PENDING_CONFIRMATION
-   ├─ Warehouse manager gets notification (manual system)
-   └─ Either CONFIRMS or REJECTS the appointment
-
-END: Booking is now in system, awaiting warehouse confirmation
+1. Driver: "Vehicle breakdown, 5 hour delay"
+2. Agent: lookup_driver_context → finds SHP1009 CRITICAL priority
+3. Agent: get_feasible_slots_tool → no slots available (facility closes)
+4. Agent: escalate_to_human(urgency=CRITICAL, reason="No slots after ETA")
+   → Supabase: creates EXC-XXXXXXXX in driver_exceptions
+5. Agent responds: "Escalated to ops team. Reference: EXC-XXXXXXXX"
+6. Dashboard shows RED escalation card for coordinator
 ```
 
----
-
-### Flow 3: No Slots Available (Escalation)
+### Flow 3: Two Drivers, Same Slot
 
 ```
-ACTOR: Driver (urgent delivery, ETA pushed back significantly)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-1. Driver: "I won't make it. Vehicle broke down. ETA is now 11 PM."
-
-2. Agent lookup_driver_context()
-   └─ Gets shipment info, facility_id=FAC-JAI-01
-
-3. Agent calculates: 
-   ├─ Current ETA: 11:00 PM (23:00 IST)
-   ├─ Facility closes at: 10:00 PM
-   └─ Problem: No slots available after hours
-
-4. Agent get_feasible_slots_tool()
-   ├─ Query: facility_id, dock_type, after_eta_ts="2026-08-17T23:00:00+05:30"
-   ├─ Result: empty list
-   ├─ Reason: Facility closes at 10 PM, driver arriving at 11 PM
-   └─ Response: available=False, no slots
-
-5. Agent Decision
-   ├─ Checks system prompt rules
-   ├─ Finds: "ESCALATE IMMEDIATELY if no feasible slot exists"
-   ├─ No slots exist for late arrival
-   └─ Decision: ESCALATE
-
-6. Agent Tool 6: escalate_to_human()
-   ├─ Calls with:
-   │  ├─ shipment_id="SHP1006"
-   │  ├─ driver_id="DRV006"
-   │  ├─ thread_id="THR-XXXXXXXX"
-   │  ├─ reason="Vehicle broken down, ETA 11:00 PM. Facility closes at 10 PM."
-   │  └─ urgency="CRITICAL"
-   │
-   ├─ Backend action:
-   │  ├─ INSERT into driver_exceptions (exception_id="EXC-XXXXXXXX", ...)
-   │  ├─ Trigger email: "HumanInTheLook@gmail.com"
-   │  └─ Update ops dashboard
-   │
-   └─ Returns: escalation_id="EXC-XXXXXXXX"
-
-7. Agent Response
-   ├─ Message to driver:
-   │  "Manoj, this is urgent. You'll arrive after the facility closes. 
-   │   I've escalated this to our ops team. Reference: EXC-XXXXXXXX.
-   │   A coordinator will call you shortly to find a solution."
-   │
-   └─ Save to DB and Redis
-
-8. Ops Team Actions
-   ├─ Dashboard shows escalation CRITICAL
-   ├─ Ops coordinator reviews:
-   │  ├─ Shipment details
-   │  ├─ Driver info
-   │  ├─ Failure reason
-   │  └─ All conversation history
-   │
-   ├─ Coordinator options:
-   │  ├─ Call facility manager to extend hours
-   │  ├─ Find alternative facility
-   │  ├─ Arrange next-day delivery
-   │  └─ Call driver directly
-   │
-   └─ Manually update appointment or close thread
-
-END: Human coordination required
-```
-
----
-
-### Flow 4: Ops Dashboard Real-Time Monitoring
-
-```
-ACTOR: Operations Manager (monitoring facility status)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-1. Manager opens dashboard.html
-
-2. Dashboard JavaScript:
-   ├─ setInterval(loadAll, 30000) — refresh every 30 seconds
-   └─ First call to loadAll()
-
-3. loadAll() chains parallel fetches:
-   ├─ fetch(/ops/queue) → Queue list, shipment statuses
-   ├─ fetch(/ops/holds) → Active slots being negotiated
-   ├─ fetch(/ops/escalations) → Issues needing attention
-   ├─ fetch(/ops/threads) → Active driver conversations
-   └─ fetch(/ops/slots/{facility_id}) → Available/booked slots
-
-4. Dashboard Updates
-   ├─ Stats Row:
-   │  ├─ "In Transit: 12"
-   │  ├─ "Waiting: 3"
-   │  ├─ "In Dock: 2"
-   │  ├─ "Active Holds: 1"
-   │  ├─ "Escalations: 2" ← Red highlight if > 0
-   │  └─ "Open Threads: 5"
-   │
-   ├─ Queue Panels:
-   │  ├─ Shows top shipments by priority
-   │  ├─ Color-coded by priority (RED=CRITICAL, ORANGE=HIGH)
-   │  └─ Clickable cards show more details
-   │
-   ├─ Slot Schedule Grid:
-   │  ├─ Dock-by-dock visualization
-   │  ├─ Color-coded slots: OPEN|BOOKED|PROGRESS|HELD|BLOCKED
-   │  ├─ IST timestamps formatted for India timezone
-   │  └─ Hover shows slot details
-   │
-   ├─ Escalations Panel:
-   │  ├─ Red background (urgent)
-   │  ├─ Clickable escalation IDs
-   │  ├─ Shows reason and urgency
-   │  └─ Manual action buttons (resolve, contact driver)
-   │
-   ├─ Holds Panel:
-   │  ├─ Yellow background (negotiations)
-   │  ├─ Shows which driver holding which slot
-   │  ├─ Time remaining on hold (countdown)
-   │  └─ "Slot expires in 1 min 23 sec"
-   │
-   └─ Threads Panel:
-       ├─ List of active driver conversations
-       ├─ Click to see full chat history
-       └─ Status indicators (OPEN, WAITING_FOR_DRIVER, etc.)
-
-5. Admin Chat Widget (bottom-right)
-   ├─ Button: "💬 Ask ops assistant"
-   ├─ Ops staff can ask:
-   │  ├─ "How many CRITICAL escalations?"
-   │  ├─ "Which slots are held?"
-   │  ├─ "Show me in-transit shipments"
-   │  └─ Agent uses get_ops_summary to answer
-   │
-   └─ Uses same agent as driver chat
-
-6. Real-Time Updates
-   ├─ Every 30 seconds, all data refreshes
-   ├─ Live badge pulses green
-   ├─ Timestamp shown: "Updated: 10:30:45 AM"
-   └─ Manager sees live facility state
-
-BENEFIT: Full visibility without manual queries
-```
-
----
-
-## Workflows
-
-### Workflow 1: Standard Delay Resolution (Happy Path)
-
-```
-┌─────────────────────────────────────────────────────────┐
-│ ACTOR: Driver reporting delay                           │
-└─────────────────────────────────────────────────────────┘
-
-1. Driver sends message
-   └─ "I'm 90 minutes late"
-
-2. Agent calls lookup_driver_context
-   └─ Confirms shipment, facility, dock type
-
-3. Agent calls get_feasible_slots_tool
-   └─ Finds available slots after new ETA
-
-4. Agent calls hold_slot_tool
-   └─ Reserves first viable slot (2 min hold)
-
-5. Agent proposes slot
-   └─ "I found a slot at 2:00 PM, Dock 3. Does this work?"
-
-6. Driver responds "YES"
-
-7. Agent calls confirm_booking_tool
-   ├─ Saves ETA update
-   ├─ Books appointment (PENDING_CONFIRMATION)
-   ├─ Releases hold from Redis
-   └─ Confirms to driver
-
-8. Warehouse manager confirms
-   └─ Appointment status changes to CONFIRMED
-
-RESULT: Shipment re-booked, no human intervention needed ✓
-TIME: 5-10 minutes total
-```
-
----
-
-### Workflow 2: Escalation Path (Complex Issue)
-
-```
-┌─────────────────────────────────────────────────────────┐
-│ ACTOR: Driver in complex situation                      │
-└─────────────────────────────────────────────────────────┘
-
-1. Driver reports emergency
-   └─ "Vehicle broken down, 4 hour delay, hazmat load"
-
-2. Agent detects red flags
-   ├─ Hazmat = requires special handling
-   ├─ 4 hour delay = likely no slots
-   ├─ Emergency = safety concern
-   └─ Decision: ESCALATE immediately
-
-3. Agent calls escalate_to_human
-   ├─ urgency="CRITICAL"
-   ├─ reason="Hazmat load + emergency delay"
-   └─ Creates escalation ticket
-
-4. Escalation recorded
-   ├─ Saved to driver_exceptions table
-   ├─ Shown on ops dashboard (RED)
-   ├─ Email sent to operations team
-   └─ Ticket ID provided to driver
-
-5. Operations coordinator
-   ├─ Reviews escalation details
-   ├─ Sees full conversation history
-   ├─ Calls driver directly
-   ├─ Arranges alternative facility OR
-   ├─ Contacts hazmat team OR
-   └─ Coordinates special handling
-
-6. Coordinator manually updates
-   ├─ Books appointment or
-   ├─ Schedules for next day or
-   ├─ Diverts to alternate facility
-   └─ Updates status in dashboard
-
-7. Thread closed
-   ├─ Driver informed of resolution
-   ├─ Thread status = CLOSED
-   └─ Escalation marked RESOLVED
-
-RESULT: Complex issue handled by humans ✓
-TIME: 15-60 minutes (real-time human coordination)
-```
-
----
-
-### Workflow 3: Rapid Hold/Release (Slot Shopping)
-
-```
-┌─────────────────────────────────────────────────────────┐
-│ ACTOR: Driver comparing multiple slot options           │
-└─────────────────────────────────────────────────────────┘
-
-Turn 1: "What slots are available?"
-  ├─ Agent gets 3 slots
-  ├─ Holds slot 1 (for agent, 2 min)
-  └─ Shows all 3 to driver
-
-Turn 2: Driver asks "What's the difference between slot 2 and 3?"
-  ├─ Agent checks: slot 1 still held (< 2 min)
-  ├─ Discusses slots 2 and 3 (not holding them yet)
-  └─ Slot 1 hold remains active
-
-Turn 3: Driver says "Okay, I want slot 2"
-  ├─ Agent releases hold on slot 1
-  ├─ Agent holds slot 2
-  └─ Confirms: "Slot 2 (3 PM - 4:30 PM) reserved for 2 min"
-
-Turn 4: Driver confirms "Yes, book slot 2"
-  ├─ Agent confirms_booking_tool(slot_id=2)
-  ├─ Slot 2 booked, hold released
-  └─ Appointment created
-
-RESULT: Driver choice respected, slots protected via holds ✓
-TIME: 3-5 minutes
+Driver A & B both want SLOT-JAI-D2-005 at 14:00
+  ↓
+Driver A: Redis SET NX → SUCCESS → holds slot
+Driver B: Redis SET NX → FAIL → "Slot being processed, choose another"
+  ↓
+Driver A confirms → Supabase appointment created → Redis hold released
+Driver B: slot search returns next available slot
 ```
 
 ---
 
 ## Deployment & Configuration
 
-### Environment Variables (.env)
+### Environment Variables
 
 ```bash
-# LLM Configuration (OpenRouter — unified API to multiple models)
-OPENROUTER_API_KEY=sk-or-v1-...
-OPENROUTER_MODEL=anthropic/claude-3-5-sonnet  # or gpt-4, gemini, etc.
+# LLM
+GROQ_API_KEY=gsk_...
+OPENROUTER_API_KEY=sk-or-...   # backup
+OPENROUTER_MODEL=anthropic/claude-3.5-sonnet
 
-# LangSmith (Observability - see every agent step)
+# LangSmith
 LANGCHAIN_TRACING_V2=true
-LANGCHAIN_API_KEY=lsv2_...
-LANGSMITH_PROJECT=SetuHaul
-LANGSMITH_ENDPOINT=https://api.smith.langchain.com
+LANGCHAIN_API_KEY=lsv2_pt_...
+LANGCHAIN_PROJECT=setuhaul-agent
 
-# Supabase (PostgreSQL + Auth)
-SUPABASE_URL=https://xxxxx.supabase.co
-SUPABASE_KEY=sbpk_production_xxxxx  # Service role key (server-side only)
+# Supabase
+SUPABASE_URL=https://xxxx.supabase.co
+SUPABASE_KEY=eyJhbGci...
 
-# Redis (Session state + slot holds)
-REDIS_URL=redis://user:pass@host:6379
+# Redis
+REDIS_URL=redis://localhost:6379   # local WSL2
+# or Redis Cloud URL for production
 
-# Deployment
-API_BASE_URL=https://setuhaul-api.herokuapp.com  # Used by get_ops_summary tool
+# Google (optional)
+GOOGLE_API_KEY=AIza...
 ```
 
-### Procfile (Heroku Deployment)
+### Railway Deployment
 
-```bash
-web: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+**Service 1 — Python Backend**
+```
+Root directory:   /
+Build command:    pip install -r requirements.txt
+Start command:    uvicorn app.main:app --host 0.0.0.0 --port 8000
+Port:             8000
 ```
 
-### Runtime
-
+**Service 2 — React Frontend**
 ```
-python-3.11.9
-```
-
-### How to Deploy (Heroku Example)
-
-```bash
-# 1. Create Heroku app
-heroku create setuhaul-api
-
-# 2. Set environment variables
-heroku config:set SUPABASE_URL=...
-heroku config:set SUPABASE_KEY=...
-heroku config:set REDIS_URL=...
-heroku config:set OPENROUTER_API_KEY=...
-heroku config:set API_BASE_URL=https://setuhaul-api.herokuapp.com
-
-# 3. Deploy
-git push heroku main
-
-# 4. Verify
-heroku logs --tail
+Root directory:   frontend/frontend-react
+Build command:    npm run build
+Start command:    npx nitro preview
+Port:             8080
 ```
 
 ### Local Development
 
 ```bash
-# 1. Clone repository
-git clone <repo>
-cd SetuHaul
+# Terminal 1 — Redis (WSL2)
+sudo service redis-server start
 
-# 2. Create .env from .env.example
-cp .env.example .env
-# Edit .env with local keys
+# Terminal 2 — Backend
+cd D:\FDE\Coding_projects\SetuHaul
+.venv\Scripts\activate
+uvicorn app.main:app --reload --port 8000
 
-# 3. Install dependencies
-pip install -r requirements.txt
+# Terminal 3 — React frontend
+cd frontend\frontend-react
+npm run dev
 
-# 4. Run server
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-
-# 5. Open browser
-# Chat UI: http://localhost:8000/portal/chat
-# Dashboard: http://localhost:8000/dashboard
-# API: http://localhost:8000/docs (Swagger UI)
+# URLs
+# Backend API docs: http://localhost:8000/docs
+# HTML Portal:      http://localhost:8000/portal
+# HTML Dashboard:   http://localhost:8000/dashboard
+# React App:        http://localhost:5173 (or as shown in terminal)
 ```
+
+### Useful Test Credentials
+
+| Driver | ID | Phone |
+|--------|----|-------|
+| Manoj Sharma (HIGH priority, IN_TRANSIT) | DRV006 | +91-9000010006 |
+| Vikram Solanki (CRITICAL, medical supplies) | DRV009 | +91-9000010009 |
+| Deepak Saini (HIGH, REEFER dock) | DRV010 | +91-9000010010 |
+| Rajesh Kumar | DRV001 | +91-9000010001 |
 
 ---
 
 ## Frontend Architecture
 
-### 1. Login Portal (index.html)
+### 1. React App (TanStack Start + Nitro)
 
-**Purpose**: Driver authentication
+**Routes**:
+- `/` — Landing page
+- `/driver` — Driver workspace (login + chat)
+- `/dashboard` — Ops overview
+- `/dashboard/{warehouseId}` — Facility detail view
 
-**Components**:
-- Driver ID input
-- Phone number input (verification)
-- Login button
-- Error messaging
-
-**Flow**:
-```
-User enters ID + phone
-    ↓
-POST /auth/login
-    ↓
-Backend verifies against database
-    ↓
-Success: Redirect to /portal/chat
-Failure: Show error message
+**API Connection** (`src/lib/api.ts`):
+```typescript
+export const API_BASE = "https://setuhaul-production.up.railway.app";
 ```
 
----
+**Current state**: UI is connected to live backend. Ops assistant uses `/ops/chat`.
 
-### 2. Chat Interface (chat.html)
+### 2. HTML Portal (Fallback)
 
-**Purpose**: Driver-to-Agent conversation
+Served directly by FastAPI. Full login → chat flow works independently.
 
-**Components**:
-- Driver banner (name, shipment details)
-- Message history
-- Input box + Send button
-- Status indicators
+- `/portal` — Login (driver_id + phone)
+- `/portal/chat` — Chat with agent
+- `/dashboard` — Ops dashboard (30s auto-refresh)
 
-**Features**:
-- Real-time message display
-- Typing indicators (if implemented)
-- Slot options rendered as cards
-- Clickable confirmations
-- Error handling
+### 3. Ops Dashboard Features
 
-**Flow**:
-```
-Driver types message
-    ↓
-Click "Send" or press Enter
-    ↓
-POST /chat {driver_id, message}
-    ↓
-Disable input while processing
-    ↓
-Receive response
-    ↓
-Display message + any options
-    ↓
-Re-enable input
-```
-
----
-
-### 3. Operations Dashboard (dashboard.html)
-
-**Purpose**: Real-time facility monitoring
-
-**Sections**:
-
-**a) Header**
-- SetuHaul logo
-- Title: "SetuHaul Ops Dashboard"
-- Last updated timestamp
-- Live badge (green pulsing dot)
-- Refresh button
-
-**b) Stats Row**
-- In Transit: X trucks
-- Waiting: Y trucks
-- In Dock: Z trucks
-- Active Holds: H slots being negotiated
-- Escalations: E issues (RED if > 0)
-- Open Threads: T active conversations
-
-**c) Queue Panels (3 columns)**
-- In Transit shipments
-- Waiting shipments
-- In Dock shipments
-
-**d) Slot Schedule Grid**
-- Dock-by-dock visualization
-- Time-based slot view
-- Color-coded statuses
-- IST formatting for India timezone
-
-**e) Escalations Panel** (Red)
-- List of open issues
-- Urgency color-coded
-- Clickable for details
-- Action buttons
-
-**f) Holds Panel** (Yellow)
-- Slots being negotiated
-- Driver + shipment info
-- Time remaining (countdown)
-- Release option
-
-**g) Threads Panel**
-- Active conversations
-- Driver info
-- Status indicators
-- View history
-
-**h) Admin Chat Widget** (Bottom-right)
-- Floating button: 💬
-- Opens chat box
-- Can ask agent questions about facility state
-- Uses same agent as driver chat
-
-**Refresh Behavior**:
-```
-Page loads
-    ↓
-JavaScript: setInterval(loadAll, 30000)
-    ↓
-Every 30 seconds:
-  ├─ fetch(/ops/queue)
-  ├─ fetch(/ops/holds)
-  ├─ fetch(/ops/escalations)
-  ├─ fetch(/ops/threads)
-  └─ fetch(/ops/slots/{facility_id})
-    ↓
-Update all panels
-    ↓
-Timestamp updated: "Updated: 10:30:45 AM"
-```
+- Stats row: In Transit / Waiting / In Dock / Holds / Escalations / Threads
+- Dock schedule grid (colour-coded: open/booked/held/blocked/in-progress)
+- Escalations panel (red cards)
+- Active holds panel (yellow, ~2 min countdown)
+- Chat threads panel
+- Auto-refresh every 30 seconds
 
 ---
 
@@ -1618,490 +538,120 @@ Timestamp updated: "Updated: 10:30:45 AM"
 
 ### Status States
 
-#### **Shipment Status**
-- `ASSIGNED` — Assigned to driver, not yet in transit
-- `IN_TRANSIT` — Driver on road, heading to facility
-- `WAITING` — Arrived at facility, waiting for slot
-- `IN_DOCK` — Currently unloading
-- `DELIVERED` — Unloading complete, departed
-
-#### **Appointment Status**
-- `CONFIRMED` — Warehouse signed off, locked in
-- `PENDING_CONFIRMATION` — Booked by agent, awaiting warehouse approval
-- `IN_PROGRESS` — Truck actively unloading
-- `CANCELLED` — Cancelled by driver or ops
-
-#### **Thread Status**
-- `OPEN` — Active conversation
-- `CLOSED` — Conversation ended
-- `WAITING_FOR_DRIVER` — Awaiting driver response
-- `WAITING_FOR_WAREHOUSE` — Awaiting facility confirmation
-
-#### **Escalation Status**
-- `OPEN` — Unresolved, needs attention
-- `RESOLVED` — Human coordinator took action
-- `DISMISSED` — False alarm, no action needed
-
----
+| Entity | States |
+|--------|--------|
+| Shipment | ASSIGNED → IN_TRANSIT → WAITING → IN_DOCK → DELIVERED |
+| Appointment | PENDING_CONFIRMATION → CONFIRMED → IN_PROGRESS → CANCELLED |
+| Slot | OPEN → BLOCKED / CLOSED |
+| Thread | OPEN → CLOSED |
+| Escalation | OPEN → RESOLVED → DISMISSED |
 
 ### Priority Levels
 
-| Level | Use Case | Examples |
-|-------|----------|----------|
-| `CRITICAL` | Emergency, time-sensitive | Vehicle broken down, hazmat issue |
-| `HIGH` | Urgent, same-day delivery | High-value shipment, customer priority |
-| `NORMAL` | Standard delivery | Majority of shipments |
-| `LOW` | Flexible timing | Non-urgent bulk cargo |
-
-**Agent Priority Policy**:
-- CRITICAL shipments get first access to available slots
-- All other factors equal, prioritize by level
-- Physical arrival doesn't displace a CONFIRMED appointment
-
----
+| Level | Slot Access | Example |
+|-------|------------|---------|
+| CRITICAL | First | Medical supplies, hazmat |
+| HIGH | Second | Electronics, same-day |
+| NORMAL | Third | Standard cargo |
+| LOW | Last | Bulk, flexible |
 
 ### Dock Types
 
-| Type | Purpose | Examples |
-|------|---------|----------|
-| `STANDARD` | General cargo | Electronics, textiles, machinery |
-| `REEFER` | Temperature controlled | Pharmaceuticals, perishables, frozen goods |
-| `HEAVY` | Heavy/specialized equipment | Industrial machinery, construction materials |
+| Type | Use Case |
+|------|----------|
+| STANDARD | General dry cargo |
+| REEFER | Temperature-controlled (dairy, pharma) |
+| HEAVY | Industrial machinery, steel |
+
+### Timing Windows
+
+| Element | Duration |
+|---------|----------|
+| Redis slot hold | 120 seconds |
+| Conversation memory (Redis) | 1 hour |
+| Dashboard auto-refresh | 30 seconds |
 
 ---
 
-### Confidence Levels
+## Known Issues & Planned Improvements
 
-| Level | Definition | When Used |
-|-------|-----------|----------|
-| `HIGH` | Driver certain of arrival time | Traffic cleared, vehicle repaired |
-| `MEDIUM` | Estimated based on conditions | Traffic ongoing but stabilizing |
-| `LOW` | Highly uncertain | Vehicle issue, major delays |
+### Current Known Issues
 
-**Agent Uses**:
-- Confidence influences slot selection (HIGH confidence = farther slot OK)
-- Included in ETA record for warehouse coordination
+| Issue | Status | Workaround |
+|-------|--------|-----------|
+| Dashboard not real-time (polling only) | Open | Manual refresh button |
+| Ops assistant "Could not reach" error | Fixed in v1.1 — `/ops/chat` endpoint added | Use `/ops/chat` not `/chat` |
+| React app uses mock data for some views | In progress | HTML portal is fully live |
+| Slot times display in UTC occasionally | Partial fix — IST conversion in tools.py | Check slot_start_ts directly |
+
+### Planned Improvements (Priority Order)
+
+1. **Driver bookings screen** — After login, driver sees current and upcoming bookings as cards. Each card has a "Help" button that opens the chat with the booking context pre-loaded (shipment_id, slot, ETA already known). This eliminates the need for the agent to ask which shipment.
+
+2. **Dashboard real-time sync** — Replace 30s polling with Supabase Realtime subscriptions. Slot changes, new escalations, and hold events push to dashboard instantly.
+
+3. **Hold countdown timer** — Live countdown on held slots in dashboard (currently shows "~2 min" static).
+
+4. **Ops assistant scoped context** — The `/ops/chat` endpoint currently uses DRV001 as a proxy. Should use a dedicated ops user with `get_ops_summary` tool access instead.
+
+5. **JWT authentication** — Replace phone verification with proper session tokens.
+
+6. **WhatsApp / SMS channel** — Drivers to use WhatsApp instead of web chat.
+
+7. **Warehouse confirmation flow** — Direct API for warehouse manager to CONFIRM or REJECT PENDING_CONFIRMATION appointments from dashboard.
+
+8. **Predictive ETA** — Auto-detect likely delays from GPS before driver reports.
 
 ---
 
-### Key Timing Windows
-
-| Element | Duration | Notes |
-|---------|----------|-------|
-| Redis Slot Hold | 120 seconds (2 min) | Expires automatically |
-| Conversation Memory | 3600 seconds (1 hour) | Expires if driver inactive |
-| API Request Timeout | 30 seconds | Agent waits max 30s for LLM |
-| Dashboard Refresh | 30 seconds | Auto-refresh for ops |
-| Escalation TTL | N/A | Stays until human resolves |
-
----
-
-### Race Condition Prevention
-
-**Problem**: Two drivers request same slot simultaneously
-
-**Solution**: Redis atomic SET with NX (not-exists) flag
+## Master Flow Diagram
 
 ```
-Driver A and Driver B both want slot SLOT-123
-    ↓
-Redis command: SET hold:SLOT-123 value NX EX 120
-    ↓
-Execution sequence:
-    Driver A: SET → SUCCESS (key created)
-    Driver B: SET → FAIL (key already exists)
-    ↓
-Driver A: Can proceed with booking
-Driver B: Offered alternative slot
-```
-
-**Why this works**:
-- Redis SET NX is atomic (not two separate operations)
-- No race window between check and set
-- Timeout prevents permanent locks
-- Same shipment can refresh hold
-
----
-
-### Language & Tone Philosophy
-
-**Driver-Facing**:
-- Casual, friendly tone (not corporate)
-- Understands Hinglish (Hindi-English mix)
-- Brief responses (drivers on road)
-- Clear next steps
-- Acknowledges urgency
-
-**Example**:
-```
-Good: "Manoj, I see. 2 hours late, okay. 
-       I found a slot at 3:00 PM. Will that work?"
-
-Bad:  "NOTIFICATION: Appointment status has been modified. 
-       Please acknowledge the new temporal coordinate."
-```
-
-**Operations-Facing**:
-- Professional, data-focused
-- Technical details
-- Clear escalation reasons
-- Actionable information
-
-**System Prompt Principle**: "NEVER GUESS. Check facts from database. If unknown, ASK the driver."
-
----
-
-### Decision Authority Matrix
-
-| Decision | Authority | Notes |
-|----------|-----------|-------|
-| Book slot (driver agrees) | **Agent** | Automatic, creates PENDING_CONFIRMATION |
-| Confirm appointment | **Warehouse Manager** | Via dashboard/manual system |
-| Escalate issue | **Agent** | Per system prompt rules |
-| Offer compensation | **Human Only** | Agent explicitly prohibited |
-| Override safety decision | **Human Only** | Driver+Carrier+Ops team |
-| Release all holds | **Agent or Human** | Hold expires auto or manual release |
-
----
-
-## API Response Codes & Error Handling
-
-### Success Responses
-
-| Code | Meaning | Example |
-|------|---------|---------|
-| 200 | OK | GET /ops/queue returns shipment list |
-| 201 | Created | POST /chat creates thread |
-
-### Error Responses
-
-| Code | Meaning | Example |
-|------|---------|---------|
-| 400 | Bad Request | Missing driver_id in /chat POST |
-| 403 | Forbidden | Driver phone doesn't match login attempt |
-| 404 | Not Found | Driver ID doesn't exist in database |
-| 500 | Server Error | Database connection failure |
-
-### Tool Response Patterns
-
-All agent tools return structured JSON:
-
-**Success Pattern**:
-```json
-{
-  "success": true,
-  "data": {...},
-  "message": "Human-readable message"
-}
-```
-
-**Failure Pattern**:
-```json
-{
-  "success": false,
-  "error": "Reason for failure",
-  "message": "User-facing message"
-}
+Driver: "I'm 90 min late, find me a slot"
+         ↓
+    [Chat UI / React]
+         ↓  POST /chat
+    [FastAPI Server]
+         ↓
+    [LangGraph ReAct Agent]
+    LLM reasons → picks tool → observes → reasons again
+         ↓
+    ┌────────────────────────────────┐
+    │         TOOL LAYER            │
+    │  lookup_driver_context()      │  ← Supabase: who is this driver?
+    │  get_feasible_slots_tool()    │  ← Supabase + Redis: what's free?
+    │  hold_slot_tool()             │  ← Redis SET NX EX 120: reserve it
+    │  confirm_booking_tool()       │  ← Supabase: create appointment
+    │  release_hold_tool()          │  ← Redis DEL: free the hold
+    │  escalate_to_human()          │  ← Supabase: create escalation
+    └────────────────────────────────┘
+         ↓
+    [Redis] — atomic holds, conversation memory
+    [Supabase] — permanent bookings, ETAs, messages
+         ↓
+    Response → Driver sees: "Slot at 12:00 PM booked. Ref: APT-XXXX"
+         ↓
+    [Ops Dashboard] — sees new appointment, escalations, holds live
 ```
 
 ---
 
-## Performance Considerations
-
-### Latency Budget
-
-| Operation | Target | Timeout |
-|-----------|--------|---------|
-| Driver message to response | < 5 sec | 30 sec (LLM call) |
-| Database query | < 100 ms | 5 sec |
-| Redis operation | < 10 ms | 1 sec |
-| Slot search | < 500 ms | 5 sec |
-
-### Scalability
-
-- **Supabase**: Handles 10,000+ drivers, millions of records
-- **Redis**: In-memory, ultra-fast, 10K+ concurrent holds
-- **Fastapi**: Async-first, can handle 1000+ req/sec per instance
-- **LLM API**: Rate-limited by OpenRouter (plan-dependent)
-
-### Database Indexes
-
-Required indexes for performance:
-- `shipments(driver_id, current_status)`
-- `appointments(shipment_id, is_current)`
-- `appointment_slots(facility_id, dock_type, slot_start_ts)`
-- `chat_threads(driver_id, thread_status)`
-- `driver_exceptions(exception_status, reported_at)`
-
----
-
-## Security & Data Protection
-
-### Sensitive Data Handling
-
-- **Driver Phone**: Verified at login, not logged in conversations
-- **Shipment Details**: Only shown to assigned driver
-- **Database Credentials**: In .env, never in code
-- **API Keys**: Rotated regularly, different per environment
-
-### Access Control
-
-- Supabase RLS (Row-Level Security) enforces driver can only see own shipments
-- API endpoints require valid driver_id (basic validation)
-- No authentication token (future: add JWT)
-- All database writes include audit fields (created_at, updated_at)
-
-### Data Retention
-
-- Chat messages: Kept in Supabase indefinitely
-- Conversation memory: Expires after 1 hour (Redis)
-- Slot holds: Auto-expire after 2 minutes (Redis)
-- Escalations: Kept until resolved (manual cleanup)
-
----
-
-## Future Enhancements
-
-### Planned Features
-
-1. **JWT Authentication**
-   - Replace phone verification with tokens
-   - Session management for web portals
-
-2. **SMS/WhatsApp Integration**
-   - Multi-channel support beyond web chat
-   - SMS alerts for status changes
-
-3. **Google Maps Integration**
-   - Real-time GPS tracking
-   - ETA auto-calculation from location
-
-4. **Warehouse Integration APIs**
-   - Direct appointment confirmation (eliminate manual approval)
-   - Real-time dock availability feeds
-
-5. **Advanced Analytics**
-   - Delay patterns by route/season
-   - Driver performance metrics
-   - Facility utilization reports
-
-6. **Multi-Language Support**
-   - Telugu, Tamil, Kannada for broader India coverage
-   - Hinglish remains primary
-
-7. **Predictive Delays**
-   - ML model to predict delays before driver reports
-   - Proactive slot pre-booking
-
----
-
-## Troubleshooting Guide
-
-### Issue: "Driver not found"
-**Cause**: Incorrect driver_id or typo  
-**Fix**: Verify driver_id in database, check spelling  
-**Endpoint**: `GET /driver/{driver_id}` to debug
-
-### Issue: "No slots available"
-**Cause**: All slots booked or facility closed  
-**Fix**: Check `/ops/slots/{facility_id}` to see current slots  
-**Action**: Manual escalation to ops team
-
-### Issue: "Slot hold expired"
-**Cause**: Driver took > 2 minutes to confirm  
-**Fix**: Agent will re-hold slot and re-offer  
-**Tip**: Emphasize to driver to respond quickly
-
-### Issue: "Appointment not appearing in database"
-**Cause**: Booking failed at database layer  
-**Fix**: Use `/ops/verify/{shipment_id}` to check  
-**Debug**: Check agent logs in LangSmith
-
-### Issue: "Redis connection timeout"
-**Cause**: Redis server unavailable  
-**Fix**: Check REDIS_URL environment variable  
-**Fallback**: Slot holds fail, escalate manually
-
----
-
-
-## Master Flow 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              DRIVER / USER                                  │
-│                                                                             │
-│  "I'm going to be 2 hours late. Find me another slot."                     │
-└──────────────────────────────────┬──────────────────────────────────────────┘
-                                   │
-                                   ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              CHAT / UI                                      │
-│                                                                             │
-│  Conversation context • Booking context • Slot options • Confirmation      │
-└──────────────────────────────────┬──────────────────────────────────────────┘
-                                   │
-                                   ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                            LLM / AGENT                                      │
-│                                                                             │
-│  • Understand natural language                                             │
-│  • Identify intent                                                         │
-│  • Extract parameters                                                      │
-│  • Maintain conversational context                                         │
-│  • Decide which TOOL to invoke                                             │
-│                                                                             │
-│                    ⚠️ NOT the source of business truth                     │
-└──────────────────────────────────┬──────────────────────────────────────────┘
-                                   │
-                         Structured Tool Call
-                                   │
-                                   ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              TOOL LAYER                                     │
-│                                                                             │
-│  get_feasible_slots()                                                      │
-│  allocate_slot()                                                            │
-│  confirm_booking()                                                         │
-│  update_eta()                                                              │
-│  get_booking_status()                                                      │
-│                                                                             │
-│              Tools are the controlled boundary into the system              │
-└──────────────────────────────────┬──────────────────────────────────────────┘
-                                   │
-                                   ▼
-╔═════════════════════════════════════════════════════════════════════════════╗
-║                    DETERMINISTIC BUSINESS LOGIC                            ║
-║                                                                             ║
-║  ┌─────────────────────────┐       ┌──────────────────────────────────┐   ║
-║  │      FEASIBILITY        │       │           ALLOCATION             │   ║
-║  │                         │       │                                  │   ║
-║  │  Can this slot be used? │       │  Which feasible option should   │   ║
-║  │                         │       │  be preferred?                   │   ║
-║  │  • Slot exists          │       │                                  │   ║
-║  │  • Slot open            │       │  Priority                       │   ║
-║  │  • Not already booked   │       │  Time cost                      │   ║
-║  │  • Dock compatible      │       │  Congestion*                    │   ║
-║  │  • Unload fits          │       │                                  │   ║
-║  │  • Facility accepting   │       │  → Score                         │   ║
-║  │  • No conflict          │       │  → Rank                          │   ║
-║  └────────────┬────────────┘       └────────────────┬─────────────────┘   ║
-║               │                                     │                     ║
-║               └─────────────────┬───────────────────┘                     ║
-║                                 ▼                                         ║
-║                          FEASIBLE OPTIONS                                 ║
-╚═════════════════════════════════╤═══════════════════════════════════════════╝
-                                  │
-                                  ▼
-                         ┌───────────────────┐
-                         │   OPTIONS SHOWN   │
-                         │                   │
-                         │  Slot A           │
-                         │  Slot B           │
-                         │  Slot C           │
-                         └─────────┬─────────┘
-                                   │
-                            Driver selects
-                                   │
-                                   ▼
-╔═════════════════════════════════════════════════════════════════════════════╗
-║                         COMMITMENT PATH                                    ║
-║                                                                             ║
-║                      CURRENT-STATE REVALIDATION                            ║
-║                                                                             ║
-║          "Is the selected slot STILL actually available?"                  ║
-║                                                                             ║
-╚═════════════════════════════════╤═══════════════════════════════════════════╝
-                                  │
-                              PASS │ FAIL
-                                  │    └──────────────► Alternative /
-                                  │                     Failure / Escalation
-                                  ▼
-╔═════════════════════════════════════════════════════════════════════════════╗
-║                              REDIS                                         ║
-║                                                                             ║
-║                         ATOMIC HOLD                                        ║
-║                                                                             ║
-║             Driver A ──► SET NX ──► SUCCESS ──► HOLD                      ║
-║             Driver B ──► SET NX ──► FAIL    ──► CONFLICT                  ║
-║                                                                             ║
-║                  Temporary protection of scarce capacity                    ║
-║                  Hold expires after configured TTL                          ║
-╚═════════════════════════════════╤═══════════════════════════════════════════╝
-                                  │
-                                  ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                         DATABASE / SYSTEM OF RECORD                         │
-│                                                                             │
-│                         BOOK APPOINTMENT                                    │
-│                                                                             │
-│               Persistent business state / confirmed booking                │
-└──────────────────────────────────┬──────────────────────────────────────────┘
-                                   │
-                                   ▼
-                           ┌───────────────┐
-                           │   CONFIRMED   │
-                           │               │
-                           │ Appointment   │
-                           │ persisted     │
-                           └───────┬───────┘
-                                   │
-                                   ▼
-                         Release temporary hold
-                                   │
-                                   ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              OPS / UI                                       │
-│                                                                             │
-│  Booking status • Operational visibility • Verification • Exceptions       │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-
-### Conceptualization
-                         AI WORLD
-┌──────────────────────────────────────────────────────┐
-│                                                      │
-│  User → UI → LLM → Tool                              │
-│                                                      │
-│  Natural language / interpretation / orchestration   │
-│                                                      │
-└───────────────────────┬──────────────────────────────┘
-                        │
-                        │ controlled interface
-                        ▼
-                    BUSINESS WORLD
-┌──────────────────────────────────────────────────────┐
-│                                                      │
-│  Feasibility → Allocation → Revalidation             │
-│                                                      │
-│  Deterministic business decisions                    │
-│                                                      │
-└───────────────────────┬──────────────────────────────┘
-                        │
-                        │ commitment
-                        ▼
-                  CONSISTENCY WORLD
-┌──────────────────────────────────────────────────────┐
-│                                                      │
-│  Redis Hold → DB Transaction                         │
-│                                                      │
-│  Protect scarce capacity → Persist business truth   │
-│                                                      │
-└──────────────────────────────────────────────────────┘
-## Summary: What This System Does
+## Summary
 
 **SetuHaul** is an **intelligent exception manager for freight logistics**:
 
-1. **24/7 Availability**: Agent works round-the-clock
-2. **Automated Rebooking**: Finds slots, holds them, books automatically
-3. **Human in Loop**: Escalates when needed
-4. **Real-Time Visibility**: Ops dashboard shows live facility state
-5. **Data-Driven**: All decisions verified against database facts
-6. **Race-Safe**: Redis prevents double-bookings
-7. **Scalable**: Handles thousands of drivers and shipments
+1. **24/7 Availability** — Agent runs round-the-clock
+2. **Automated Rebooking** — Finds slots, holds them, books atomically
+3. **Human in Loop** — Escalates when it can't resolve safely
+4. **Real-Time Visibility** — Ops dashboard shows live facility state
+5. **Data-Driven** — All decisions verified against DB facts, never guessed
+6. **Race-Safe** — Redis prevents double-bookings under concurrent load
+7. **Multilingual** — Understands Hinglish (Hindi + English mix)
 
-**Core Value**: Reduces operational overhead by ~80% for standard delay cases, while ensuring complex exceptions get proper human attention.
+**Core Value**: Reduces ops overhead by ~80% for standard delay cases. Complex exceptions get proper human attention with full context.
 
 ---
 
-**Document Version**: 1.0.0  
-**Last Updated**: 2026-08-17  
-**Maintained By**: SetuHaul Development Team
+**Document Version**: 1.1.0
+**Last Updated**: 2026-08-18
+**Stack**: Python · FastAPI · LangChain · LangGraph · Groq · Supabase · Redis · React · TanStack · Railway

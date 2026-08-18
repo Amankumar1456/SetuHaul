@@ -110,7 +110,7 @@ export function OpsAssistant() {
   setInput("");
 
   try {
-    const res = await fetch(`${API}/chat`, {
+    const res = await fetch(`${API}/ops/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ driver_id: "ADMIN-OPS", message: q }),
