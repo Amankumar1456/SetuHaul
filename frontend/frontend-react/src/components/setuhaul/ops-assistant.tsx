@@ -1,6 +1,6 @@
 import { Bot, Send, X } from "lucide-react";
 import { useState } from "react";
-
+import { API_BASE as API } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useOps, warehouseName, warehouseStats } from "@/lib/setuhaul/store";
