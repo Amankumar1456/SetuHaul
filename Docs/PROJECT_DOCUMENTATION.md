@@ -38,7 +38,7 @@
 | Problem | Solution |
 |---------|----------|
 | Driver gets stuck in traffic, misses appointment | Agent finds next available slot, rebooking is automatic |
-| No human available at night to handle delay calls | Conversational AI agent runs 24/7, handles ~80% of cases |
+| No human available at night to handle delay calls | Conversational AI agent runs 24/7, handles ~80% of cases |                                                                                                                                                                                                                                                                                                                                                                                                                                                                            
 | Manual slot coordination is error-prone | Database + Redis holds ensure race-free concurrent bookings |
 | Ops team has no real-time visibility | Live dashboard shows queue, escalations, holds, active threads |
 | Drivers communicate in Hinglish/casual language | Agent trained to understand informal messages in Hindi/English mix |
